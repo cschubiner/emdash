@@ -56,6 +56,16 @@ const CommandPaletteWrapper: React.FC<CommandPaletteWrapperProps> = ({
       onToggleTheme={toggleTheme}
       onGoHome={handleGoHome}
       onOpenProject={handleOpenProject}
+      onNextAgent={() =>
+        window.dispatchEvent(
+          new CustomEvent('emdash:switch-agent', { detail: { direction: 'next' } })
+        )
+      }
+      onPrevAgent={() =>
+        window.dispatchEvent(
+          new CustomEvent('emdash:switch-agent', { detail: { direction: 'prev' } })
+        )
+      }
     />
   );
 };
