@@ -391,6 +391,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
                               {item.shortcut.modifier === 'cmd' && (
                                 <CommandIcon className="h-3 w-3" />
                               )}
+                              {item.shortcut.modifier === 'cmd+shift' && (
+                                <>
+                                  <CommandIcon className="h-3 w-3" />
+                                  <span className="font-medium">⇧</span>
+                                </>
+                              )}
                               {item.shortcut.modifier === 'ctrl' && (
                                 <span className="font-medium">Ctrl</span>
                               )}
