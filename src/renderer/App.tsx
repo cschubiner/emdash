@@ -2405,7 +2405,7 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const handleReorderProjects = (sourceId: string, targetId: string) => {
+  const handleReorderProjects = (_sourceId: string, _targetId: string) => {
     // No-op: projects are now sorted by recency, not custom order
   };
 
