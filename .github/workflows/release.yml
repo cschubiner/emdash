@@ -62,10 +62,10 @@ jobs:
       - name: Install dependencies (strict lockfile)
         env:
           npm_config_python: ${{ env.python }}
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Build app (ts + vite)
-        run: pnpm run build
+        run: npm run build
 
       - name: Inject PostHog config (dev build job)
         env:
@@ -110,9 +110,9 @@ jobs:
           for A in "${ARCHS[@]}"; do
             echo "=== Building for $A ==="
             echo "Rebuilding native modules for $A (Electron $ELECTRON_VERSION)"
-            npm_config_build_from_source=true pnpm exec @electron/rebuild -f -a "$A" -v "$ELECTRON_VERSION" -w sqlite3,node-pty,keytar
+            npm_config_build_from_source=true npx @electron/rebuild -f -a "$A" -v "$ELECTRON_VERSION" -w sqlite3,node-pty,keytar
             echo "Packaging $A DMG"
-            pnpm exec electron-builder --mac dmg --$A --publish never --config.npmRebuild=false
+            npx electron-builder --mac dmg --$A --publish never --config.npmRebuild=false
           done
 
       - name: Verify native module architectures match Electron
@@ -392,9 +392,9 @@ jobs:
           for A in "${ARCHS[@]}"; do
             echo "=== Building for $A ==="
             echo "Rebuilding native modules for $A (Electron $ELECTRON_VERSION)"
-            npm_config_build_from_source=true pnpm exec @electron/rebuild -f -a "$A" -v "$ELECTRON_VERSION" -w sqlite3,node-pty,keytar
+            npm_config_build_from_source=true npx @electron/rebuild -f -a "$A" -v "$ELECTRON_VERSION" -w sqlite3,node-pty,keytar
             echo "Packaging $A DMG and ZIP"
-            pnpm exec electron-builder --mac dmg zip --$A --publish never --config.npmRebuild=false
+            npx electron-builder --mac dmg zip --$A --publish never --config.npmRebuild=false
           done
 
       - name: Verify native module architectures match Electron
