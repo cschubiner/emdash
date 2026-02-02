@@ -120,6 +120,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   const { open, isMobile, setOpen } = useSidebar();
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [archivedTasksByProject, setArchivedTasksByProject] = useState<Record<string, Task[]>>({});
+  const canReorderProjects = Boolean(onReorderProjectsFull || onReorderProjects);
 
   // Fetch archived tasks for all projects
   const fetchArchivedTasks = useCallback(async () => {
@@ -232,7 +233,9 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   as="div"
                   axis="y"
                   items={projects}
+                  enabled={canReorderProjects}
                   onReorder={(newOrder) => {
+                    if (!canReorderProjects) return;
                     if (onReorderProjectsFull) {
                       onReorderProjectsFull(newOrder as Project[]);
                     } else if (onReorderProjects) {

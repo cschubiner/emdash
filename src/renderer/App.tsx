@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppKeyboardShortcuts from './components/AppKeyboardShortcuts';
 import BrowserPane from './components/BrowserPane';
 import { CloneFromUrlModal } from './components/CloneFromUrlModal';
@@ -31,6 +31,7 @@ import type { LinearIssueSummary } from './types/linear';
 import type { GitHubIssueSummary } from './types/github';
 import type { JiraIssueSummary } from './types/jira';
 import type { AgentRun } from './types/chat';
+import type { Project } from './types/app';
 
 // Extracted hooks
 import { useModalState } from './hooks/useModalState';
@@ -52,6 +53,26 @@ import {
 } from './constants/layout';
 
 const PINNED_TASKS_KEY = 'emdash-pinned-tasks';
+
+function sortProjectsByRecency(list: Project[]): Project[] {
+  const getTimestamp = (updatedAt?: string): number =>
+    updatedAt ? new Date(updatedAt).getTime() : 0;
+
+  const getMaxTaskUpdatedAt = (project: Project): number => {
+    const tasks = project.tasks || [];
+    if (tasks.length === 0) return 0;
+    return Math.max(...tasks.map((t) => getTimestamp(t.updatedAt)));
+  };
+
+  return [...list]
+    .map((project) => ({
+      ...project,
+      tasks: project.tasks
+        ? [...project.tasks].sort((a, b) => getTimestamp(b.updatedAt) - getTimestamp(a.updatedAt))
+        : undefined,
+    }))
+    .sort((a, b) => getMaxTaskUpdatedAt(b) - getMaxTaskUpdatedAt(a));
+}
 
 const RightSidebarBridge: React.FC<{
   onCollapsedChange: (collapsed: boolean) => void;
@@ -282,6 +303,10 @@ const AppContent: React.FC = () => {
   const activeTaskProjectPath = activeTask?.projectId
     ? projectMgmt.projects.find((p) => p.id === activeTask.projectId)?.path || null
     : null;
+  const sidebarProjects = useMemo(
+    () => sortProjectsByRecency(projectMgmt.projects),
+    [projectMgmt.projects]
+  );
 
   return (
     <BrowserProvider>
@@ -357,7 +382,7 @@ const AppContent: React.FC = () => {
                     style={{ display: showEditorMode ? 'none' : undefined }}
                   >
                     <LeftSidebar
-                      projects={projectMgmt.projects}
+                      projects={sidebarProjects}
                       archivedTasksVersion={taskMgmt.archivedTasksVersion}
                       selectedProject={selectedProject}
                       onSelectProject={projectMgmt.handleSelectProject}
@@ -367,8 +392,6 @@ const AppContent: React.FC = () => {
                       onCloneProject={projectMgmt.handleCloneProjectClick}
                       onSelectTask={taskMgmt.handleSelectTask}
                       activeTask={activeTask || undefined}
-                      onReorderProjects={projectMgmt.handleReorderProjects}
-                      onReorderProjectsFull={projectMgmt.handleReorderProjectsFull}
                       onSidebarContextChange={handleSidebarContextChange}
                       onCreateTaskForProject={taskMgmt.handleStartCreateTaskFromSidebar}
                       onDeleteTask={handleDeleteTaskAndUnpin}

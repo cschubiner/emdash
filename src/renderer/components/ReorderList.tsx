@@ -6,6 +6,7 @@ type Axis = 'x' | 'y';
 interface ReorderListProps<T> {
   items: T[];
   onReorder: (items: T[]) => void;
+  enabled?: boolean;
   axis?: Axis;
   className?: string;
   itemClassName?: string;
@@ -18,6 +19,7 @@ interface ReorderListProps<T> {
 export function ReorderList<T>({
   items,
   onReorder,
+  enabled = true,
   axis = 'y',
   className,
   itemClassName,
@@ -26,6 +28,22 @@ export function ReorderList<T>({
   getKey,
   children,
 }: ReorderListProps<T>) {
+  if (!enabled) {
+    const Container: any = as;
+    return (
+      <Container className={className}>
+        {items.map((item, index) => (
+          <div
+            key={(getKey ? getKey(item, index) : (index as any)) as React.Key}
+            className={itemClassName}
+          >
+            {children(item, index)}
+          </div>
+        ))}
+      </Container>
+    );
+  }
+
   return (
     <Reorder.Group
       as={as as any}
