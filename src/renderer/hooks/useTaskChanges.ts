@@ -1,12 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useGitStatus, type GitStatusChange } from '@/stores/gitStatusStore';
 
-export interface TaskChange {
-  path: string;
-  status: string;
-  additions: number;
-  deletions: number;
-  diff?: string;
-}
+export type TaskChange = GitStatusChange;
 
 export interface TaskChanges {
   taskId: string;
@@ -17,74 +11,23 @@ export interface TaskChanges {
   error?: string;
 }
 
-export function useTaskChanges(taskPath: string, taskId: string) {
-  const [changes, setChanges] = useState<TaskChanges>({
-    taskId,
-    changes: [],
-    totalAdditions: 0,
-    totalDeletions: 0,
-    isLoading: true,
+export interface TaskChangesOptions {
+  active?: boolean;
+  pollIntervalMs?: number;
+}
+
+export function useTaskChanges(taskPath: string, taskId: string, options?: TaskChangesOptions) {
+  const snapshot = useGitStatus(taskPath, {
+    active: options?.active,
+    pollIntervalMs: options?.pollIntervalMs,
   });
 
-  const fetchChanges = useCallback(
-    async (isInitialLoad = false) => {
-      try {
-        if (isInitialLoad) {
-          setChanges((prev) => ({ ...prev, isLoading: true, error: undefined }));
-        }
-
-        const result = await window.electronAPI.getGitStatus(taskPath);
-
-        if (result.success && result.changes) {
-          const filtered = result.changes.filter(
-            (c: { path: string }) => !c.path.startsWith('.emdash/') && c.path !== 'PLANNING.md'
-          );
-          const totalAdditions = filtered.reduce((sum, change) => sum + (change.additions || 0), 0);
-          const totalDeletions = filtered.reduce((sum, change) => sum + (change.deletions || 0), 0);
-
-          setChanges({
-            taskId,
-            changes: filtered,
-            totalAdditions,
-            totalDeletions,
-            isLoading: false,
-          });
-        } else {
-          setChanges({
-            taskId,
-            changes: [],
-            totalAdditions: 0,
-            totalDeletions: 0,
-            isLoading: false,
-            error: result.error || 'Failed to fetch changes',
-          });
-        }
-      } catch (error) {
-        setChanges({
-          taskId,
-          changes: [],
-          totalAdditions: 0,
-          totalDeletions: 0,
-          isLoading: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    },
-    [taskPath, taskId]
-  );
-
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => {
-    void fetchChanges(true);
-
-    // Poll for changes every 10 seconds without loading state
-    const interval = setInterval(() => {
-      void fetchChanges(false);
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [fetchChanges]);
-
   return {
-    ...changes,
+    taskId,
+    changes: snapshot.changes,
+    totalAdditions: snapshot.totalAdditions,
+    totalDeletions: snapshot.totalDeletions,
+    isLoading: snapshot.isLoading,
+    error: snapshot.error,
   };
 }

@@ -2162,7 +2162,6 @@ const AppContent: React.FC = () => {
     }
   };
 
-<<<<<<< HEAD
   const handleArchiveTask = async (
     targetProject: Project,
     task: Task,
@@ -2406,21 +2405,8 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const handleReorderProjects = (sourceId: string, targetId: string) => {
-    setProjects((prev) => {
-      const list = [...prev];
-      const fromIdx = list.findIndex((p) => p.id === sourceId);
-      const toIdx = list.findIndex((p) => p.id === targetId);
-      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
-      const [moved] = list.splice(fromIdx, 1);
-      list.splice(toIdx, 0, moved);
-      saveProjectOrder(list);
-      return list;
-    });
-=======
   const handleReorderProjects = (_sourceId: string, _targetId: string) => {
     // No-op: projects are now sorted by recency, not custom order
->>>>>>> a2ed2fe (fix: sort left panel by recency instead of custom order)
   };
 
   const needsGhInstall = isGithubInitialized && !ghInstalled;

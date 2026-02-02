@@ -37,6 +37,7 @@ interface TaskItemProps {
   onArchive?: () => void | Promise<void | boolean>;
   showDelete?: boolean;
   showDirectBadge?: boolean;
+  isActive?: boolean;
 }
 
 export const TaskItem: React.FC<TaskItemProps> = ({
@@ -46,8 +47,11 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onArchive,
   showDelete,
   showDirectBadge = true,
+  isActive,
 }) => {
-  const { totalAdditions, totalDeletions, isLoading } = useTaskChanges(task.path, task.id);
+  const { totalAdditions, totalDeletions, isLoading } = useTaskChanges(task.path, task.id, {
+    active: isActive,
+  });
   const { pr } = usePrStatus(task.path);
   const isRunning = useTaskBusy(task.id);
 

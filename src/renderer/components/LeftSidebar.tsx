@@ -356,6 +356,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                                         task={task}
                                         showDelete
                                         showDirectBadge={false}
+                                        isActive={isActive}
                                         onDelete={
                                           onDeleteTask
                                             ? () => onDeleteTask(typedProject, task)

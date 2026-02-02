@@ -61,7 +61,9 @@ function TaskRow({
   const [isRunning, setIsRunning] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const { pr } = usePrStatus(ws.path);
-  const { totalAdditions, totalDeletions, isLoading } = useTaskChanges(ws.path, ws.id);
+  const { totalAdditions, totalDeletions, isLoading } = useTaskChanges(ws.path, ws.id, {
+    active,
+  });
 
   useEffect(() => {
     const off = activityStore.subscribe(ws.id, (busy) => setIsRunning(busy));
