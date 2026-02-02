@@ -2745,7 +2745,7 @@ const AppContent: React.FC = () => {
                     style={{ display: showEditorMode ? 'none' : undefined }}
                   >
                     <LeftSidebar
-                      projects={projects}
+                      projects={sortByRecency(projects)}
                       archivedTasksVersion={archivedTasksVersion}
                       selectedProject={selectedProject}
                       onSelectProject={handleSelectProject}
