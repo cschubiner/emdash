@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { gitStatusStore, useGitStatus, type GitStatusChange } from '@/stores/gitStatusStore';
+import { refreshGitStatus, useGitStatus, type GitStatusChange } from '@/stores/gitStatusStore';
 
 export type FileChange = GitStatusChange;
 
@@ -15,7 +15,7 @@ export function useFileChanges(taskPath: string, options?: FileChangesOptions) {
   });
 
   const refreshChanges = useCallback(async () => {
-    await gitStatusStore.refresh(taskPath, true);
+    await refreshGitStatus(taskPath, true);
   }, [taskPath]);
 
   return {

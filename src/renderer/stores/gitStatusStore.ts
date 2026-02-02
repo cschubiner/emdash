@@ -1,8 +1,12 @@
+import { useCallback, useSyncExternalStore } from 'react';
+import { subscribeToFileChanges } from '@/lib/fileChangeEvents';
+
 export type GitStatusChange = {
   path: string;
   status: string;
   additions: number;
   deletions: number;
+  isStaged: boolean;
   diff?: string;
 };
 
@@ -47,10 +51,13 @@ type GitStatusEntry = {
 const entries = new Map<string, GitStatusEntry>();
 let nextSubscriberId = 1;
 let visibilityListenerAttached = false;
+let fileChangeListenerAttached = false;
 let documentVisible =
-  typeof document === "undefined" ? true : document.visibilityState !== "hidden";
+  typeof document === 'undefined' ? true : document.visibilityState !== 'hidden';
 
-const DEFAULT_POLL_INTERVAL_MS = 10000;
+const DEFAULT_POLL_INTERVAL_MS = 20000;
+
+const isExcludedPath = (path: string) => path.startsWith('.emdash/') || path === 'PLANNING.md';
 
 const createEmptySnapshot = (workspacePath: string): GitStatusSnapshot => ({
   workspacePath,
@@ -86,6 +93,18 @@ const stopPolling = (entry: GitStatusEntry) => {
 const shouldPoll = (entry: GitStatusEntry) =>
   documentVisible && computeActiveInterval(entry) !== undefined;
 
+const normalizeChanges = (changes: Array<any>) =>
+  changes
+    .filter((change) => !isExcludedPath(change.path))
+    .map((change) => ({
+      path: change.path,
+      status: change.status,
+      additions: change.additions ?? 0,
+      deletions: change.deletions ?? 0,
+      isStaged: change.isStaged ?? false,
+      diff: change.diff,
+    }));
+
 const fetchAndNotify = async (
   entry: GitStatusEntry,
   options?: { showLoading?: boolean }
@@ -109,13 +128,7 @@ const fetchAndNotify = async (
     const result = await window.electronAPI.getGitStatus(entry.workspacePath);
 
     if (result?.success && Array.isArray(result.changes)) {
-      const changes = result.changes.map((change: any) => ({
-        path: change.path,
-        status: change.status,
-        additions: change.additions ?? 0,
-        deletions: change.deletions ?? 0,
-        diff: change.diff,
-      }));
+      const changes = normalizeChanges(result.changes);
 
       entry.snapshot = {
         workspacePath: entry.workspacePath,
@@ -130,13 +143,13 @@ const fetchAndNotify = async (
         workspacePath: entry.workspacePath,
         changes: [],
         isLoading: false,
-        error: result?.error || "Failed to fetch git status",
+        error: result?.error || 'Failed to fetch git status',
         lastUpdated: Date.now(),
       };
       entry.lastFetchAt = Date.now();
     }
   } catch (error) {
-    console.error("Failed to fetch git status:", error);
+    console.error('Failed to fetch git status:', error);
     entry.snapshot = {
       workspacePath: entry.workspacePath,
       changes: [],
@@ -165,6 +178,9 @@ const updatePolling = (entry: GitStatusEntry) => {
 
   if (!shouldBePolling) {
     stopPolling(entry);
+    if (documentVisible && entry.subscribers.size > 0 && entry.lastFetchAt === undefined) {
+      void fetchAndNotify(entry, { showLoading: true });
+    }
     return;
   }
 
@@ -182,14 +198,30 @@ const updatePolling = (entry: GitStatusEntry) => {
 };
 
 const ensureVisibilityListener = () => {
-  if (visibilityListenerAttached || typeof document === "undefined") {
+  if (visibilityListenerAttached || typeof document === 'undefined') {
     return;
   }
 
   visibilityListenerAttached = true;
-  document.addEventListener("visibilitychange", () => {
-    documentVisible = document.visibilityState !== "hidden";
+  document.addEventListener('visibilitychange', () => {
+    documentVisible = document.visibilityState !== 'hidden';
     entries.forEach((entry) => updatePolling(entry));
+  });
+};
+
+const ensureFileChangeListener = () => {
+  if (fileChangeListenerAttached || typeof window === 'undefined') {
+    return;
+  }
+
+  fileChangeListenerAttached = true;
+  subscribeToFileChanges((event) => {
+    if (!documentVisible) return;
+    const taskPath = event.detail?.taskPath;
+    if (!taskPath) return;
+    const entry = entries.get(taskPath);
+    if (!entry) return;
+    void fetchAndNotify(entry, { showLoading: false });
   });
 };
 
@@ -211,9 +243,15 @@ const getOrCreateEntry = (workspacePath: string): GitStatusEntry => {
 
 export const getGitStatusSnapshot = (workspacePath: string): GitStatusSnapshot => {
   if (!workspacePath) {
-    return createEmptySnapshot("");
+    return createEmptySnapshot('');
   }
   return entries.get(workspacePath)?.snapshot ?? createEmptySnapshot(workspacePath);
+};
+
+export const refreshGitStatus = async (workspacePath: string, showLoading = true) => {
+  if (!workspacePath) return;
+  const entry = entries.get(workspacePath) ?? getOrCreateEntry(workspacePath);
+  await fetchAndNotify(entry, { showLoading });
 };
 
 export const subscribeToGitStatus = (
@@ -231,6 +269,7 @@ export const subscribeToGitStatus = (
   }
 
   ensureVisibilityListener();
+  ensureFileChangeListener();
 
   const entry = getOrCreateEntry(workspacePath);
   const id = nextSubscriberId++;
@@ -294,6 +333,24 @@ export const subscribeToGitStatus = (
 export const gitStatusStore = {
   getGitStatusSnapshot,
   subscribeToGitStatus,
+  refreshGitStatus,
+};
+
+export const useGitStatus = (workspacePath: string, options?: GitStatusSubscribeOptions) => {
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const subscription = subscribeToGitStatus(workspacePath, listener, options);
+      return () => subscription.unsubscribe();
+    },
+    [workspacePath, options?.isActive, options?.pollIntervalMs]
+  );
+
+  const getSnapshot = useCallback(
+    () => getGitStatusSnapshot(workspacePath),
+    [workspacePath]
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 };
 
 export { createEmptySnapshot };
