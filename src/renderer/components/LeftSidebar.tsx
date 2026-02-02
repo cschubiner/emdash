@@ -469,6 +469,136 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                                           )
                                         )}
                                       </div>
+                                {typedProject.tasks
+                                  ?.slice()
+                                  .sort((a, b) => {
+                                    const aPinned = pinnedTaskIds?.has(a.id) ? 1 : 0;
+                                    const bPinned = pinnedTaskIds?.has(b.id) ? 1 : 0;
+                                    return bPinned - aPinned;
+                                  })
+                                  .map((task) => {
+                                    const isActive = activeTask?.id === task.id;
+                                    return (
+                                      <div
+                                        key={task.id}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (
+                                            onSelectProject &&
+                                            selectedProject?.id !== typedProject.id
+                                          ) {
+                                            onSelectProject(typedProject);
+                                          }
+                                          onSelectTask && onSelectTask(task);
+                                        }}
+                                        className={`group/task min-w-0 rounded-md px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/5 ${
+                                          isActive ? 'bg-black/5 dark:bg-white/5' : ''
+                                        }`}
+                                        title={task.name}
+                                      >
+                                        <TaskItem
+                                          task={task}
+                                          showDelete
+                                          showDirectBadge={false}
+                                          isPinned={pinnedTaskIds?.has(task.id)}
+                                          onPin={onPinTask ? () => onPinTask(task) : undefined}
+                                          onDelete={
+                                            onDeleteTask
+                                              ? () => onDeleteTask(typedProject, task)
+                                              : undefined
+                                          }
+                                          onRename={
+                                            // Disable rename for multi-agent tasks (variant metadata would become stale)
+                                            onRenameTask && !task.metadata?.multiAgent?.enabled
+                                              ? (newName) =>
+                                                  onRenameTask(typedProject, task, newName)
+                                              : undefined
+                                          }
+                                          onArchive={
+                                            onArchiveTask
+                                              ? () =>
+                                                  handleArchiveTaskWithRefresh(typedProject, task)
+                                              : undefined
+                                          }
+                                        />
+                                      </div>
+                                    );
+                                  })}
+
+                                {/* Archived tasks section */}
+                                {archivedTasksByProject[typedProject.id]?.length > 0 && (
+                                  <Collapsible className="mt-1">
+                                    <CollapsibleTrigger asChild>
+                                      <button
+                                        type="button"
+                                        className="group/archived flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+                                      >
+                                        <Archive className="h-3 w-3 opacity-50" />
+                                        <span>
+                                          Archived ({archivedTasksByProject[typedProject.id].length}
+                                          )
+                                        </span>
+                                        <div className="ml-auto flex h-3 w-3 flex-shrink-0 items-center justify-center">
+                                          <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]/archived:rotate-90" />
+                                        </div>
+                                      </button>
+                                    </CollapsibleTrigger>
+                                    <CollapsibleContent>
+                                      <div className="ml-1.5 space-y-0.5 border-l border-border/50 pl-2">
+                                        {archivedTasksByProject[typedProject.id].map(
+                                          (archivedTask) => (
+                                            <div
+                                              key={archivedTask.id}
+                                              className="group/archived-task flex min-w-0 items-center justify-between gap-2 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                            >
+                                              <span className="truncate text-xs font-medium">
+                                                {archivedTask.name}
+                                              </span>
+                                              <div className="flex flex-shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/archived-task:opacity-100">
+                                                <TooltipProvider>
+                                                  <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                      <Button
+                                                        variant="ghost"
+                                                        size="icon-sm"
+                                                        className="h-5 w-5"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          handleRestoreTask(
+                                                            typedProject,
+                                                            archivedTask
+                                                          );
+                                                        }}
+                                                      >
+                                                        <RotateCcw className="h-3 w-3" />
+                                                      </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="top" className="text-xs">
+                                                      Restore Task
+                                                    </TooltipContent>
+                                                  </Tooltip>
+                                                </TooltipProvider>
+                                                <TaskDeleteButton
+                                                  taskName={archivedTask.name}
+                                                  taskId={archivedTask.id}
+                                                  taskPath={archivedTask.path}
+                                                  useWorktree={archivedTask.useWorktree !== false}
+                                                  className="h-5 w-5"
+                                                  onConfirm={async () => {
+                                                    if (onDeleteTask) {
+                                                      await onDeleteTask(
+                                                        typedProject,
+                                                        archivedTask
+                                                      );
+                                                      fetchArchivedTasks();
+                                                    }
+                                                  }}
+                                                />
+                                              </div>
+                                            </div>
+                                          )
+                                        )}
+                                      </div>
                                     </CollapsibleContent>
                                   </Collapsible>
                                 )}
