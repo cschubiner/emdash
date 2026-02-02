@@ -1242,8 +1242,13 @@ const AppContent: React.FC = () => {
     if (!selectedProject) return;
     try {
       const persistLastAgentRuns = (runs: import('./types/chat').AgentRun[]) => {
+        // Debug logging - remove after confirming fix
+        console.log('[App] Persisting agent runs:', runs);
         window.electronAPI
           .updateSettings({ tasks: { lastAgentRuns: runs } })
+          .then((res) => {
+            console.log('[App] Settings updated, new lastAgentRuns:', res?.settings?.tasks?.lastAgentRuns);
+          })
           .catch((error) => {
             console.error('Failed to persist last agent selection:', error);
           });

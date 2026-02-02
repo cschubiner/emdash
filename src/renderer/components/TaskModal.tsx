@@ -141,9 +141,22 @@ const TaskModal: React.FC<TaskModalProps> = ({
     if (!hasAutoApproveSupport && autoApprove) setAutoApprove(false);
   }, [hasAutoApproveSupport, autoApprove]);
 
+  // Track if settings have been loaded for this modal session
+  const settingsLoadedRef = useRef(false);
+
   // Reset form and load settings when modal opens
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Reset the flag when modal closes so settings reload on next open
+      settingsLoadedRef.current = false;
+      return;
+    }
+
+    // Prevent double-loading in React strict mode
+    if (settingsLoadedRef.current) {
+      return;
+    }
+    settingsLoadedRef.current = true;
 
     // Reset state
     setTaskName('');
@@ -171,9 +184,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
     autoNameInitializedRef.current = true;
 
     // Load settings
-    let cancel = false;
     window.electronAPI.getSettings().then((res) => {
-      if (cancel) return;
       const settings = res?.success ? res.settings : undefined;
 
       const settingsAgent = settings?.defaultProvider;
@@ -181,6 +192,14 @@ const TaskModal: React.FC<TaskModalProps> = ({
         ? (settingsAgent as Agent)
         : DEFAULT_AGENT;
       const savedRuns = normalizeAgentRuns(settings?.tasks?.lastAgentRuns, agent);
+
+      // Debug logging - remove after confirming fix
+      console.log('[TaskModal] Loading agent runs from settings:', {
+        lastAgentRuns: settings?.tasks?.lastAgentRuns,
+        defaultProvider: settings?.defaultProvider,
+        normalizedRuns: savedRuns,
+      });
+
       setAgentRuns(savedRuns);
 
       const autoApproveByDefault = settings?.tasks?.autoApproveByDefault ?? false;
@@ -194,10 +213,6 @@ const TaskModal: React.FC<TaskModalProps> = ({
         setError(null);
       }
     });
-
-    return () => {
-      cancel = true;
-    };
   }, [isOpen]);
 
   const getInitialPromptPlaceholder = () => {
