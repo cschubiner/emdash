@@ -64,6 +64,7 @@ declare global {
           tasks?: {
             autoGenerateName: boolean;
             autoApproveByDefault: boolean;
+            lastAgentRuns?: Array<{ agent: string; runs: number }>;
           };
           projects?: {
             defaultDirectory: string;
@@ -143,6 +144,7 @@ declare global {
           tasks?: {
             autoGenerateName?: boolean;
             autoApproveByDefault?: boolean;
+            lastAgentRuns?: Array<{ agent: string; runs: number }>;
           };
           projects?: {
             defaultDirectory?: string;
@@ -221,6 +223,7 @@ declare global {
           tasks?: {
             autoGenerateName: boolean;
             autoApproveByDefault: boolean;
+            lastAgentRuns?: Array<{ agent: string; runs: number }>;
           };
           projects?: {
             defaultDirectory: string;
