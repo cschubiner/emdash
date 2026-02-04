@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { subscribeToFileChanges } from "@/lib/fileChangeEvents";
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { subscribeToFileChanges } from '@/lib/fileChangeEvents';
 
 export interface FileChange {
   path: string;
-  status: "added" | "modified" | "deleted" | "renamed";
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
   additions: number;
   deletions: number;
   isStaged: boolean;
@@ -15,19 +15,16 @@ interface UseFileChangesOptions {
   idleIntervalMs?: number;
 }
 
-export function useFileChanges(
-  taskPath: string,
-  options: UseFileChangesOptions = {},
-) {
+export function useFileChanges(taskPath: string, options: UseFileChangesOptions = {}) {
   const [fileChanges, setFileChanges] = useState<FileChange[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDocumentVisible, setIsDocumentVisible] = useState(() => {
-    if (typeof document === "undefined") return true;
-    return document.visibilityState === "visible";
+    if (typeof document === 'undefined') return true;
+    return document.visibilityState === 'visible';
   });
   const [isWindowFocused, setIsWindowFocused] = useState(() => {
-    if (typeof document === "undefined") return true;
+    if (typeof document === 'undefined') return true;
     return document.hasFocus();
   });
 
@@ -37,7 +34,7 @@ export function useFileChanges(
   const hasLoadedRef = useRef(false);
   const shouldPollRef = useRef(false);
   const idleHandleRef = useRef<number | null>(null);
-  const idleHandleModeRef = useRef<"idle" | "timeout" | null>(null);
+  const idleHandleModeRef = useRef<'idle' | 'timeout' | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -53,22 +50,22 @@ export function useFileChanges(
   }, [taskPath]);
 
   useEffect(() => {
-    if (typeof document === "undefined" || typeof window === "undefined") return;
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
 
     const handleVisibility = () => {
-      setIsDocumentVisible(document.visibilityState === "visible");
+      setIsDocumentVisible(document.visibilityState === 'visible');
     };
     const handleFocus = () => setIsWindowFocused(true);
     const handleBlur = () => setIsWindowFocused(false);
 
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("blur", handleBlur);
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
 
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
     };
   }, []);
 
@@ -99,29 +96,23 @@ export function useFileChanges(
               diff?: string;
             }) => ({
               path: change.path,
-              status: change.status as
-                | "added"
-                | "modified"
-                | "deleted"
-                | "renamed",
+              status: change.status as 'added' | 'modified' | 'deleted' | 'renamed',
               additions: change.additions || 0,
               deletions: change.deletions || 0,
               isStaged: change.isStaged || false,
               diff: change.diff,
-            }),
+            })
           )
-          .filter(
-            (c) => !c.path.startsWith(".emdash/") && c.path !== "PLANNING.md",
-          );
+          .filter((c) => !c.path.startsWith('.emdash/') && c.path !== 'PLANNING.md');
         setFileChanges(changes);
       } else {
         setFileChanges([]);
       }
     } catch (err) {
       if (!mountedRef.current) return;
-      console.error("Failed to fetch file changes:", err);
+      console.error('Failed to fetch file changes:', err);
       if (isInitialLoad) {
-        setError("Failed to load file changes");
+        setError('Failed to load file changes');
       }
       setFileChanges([]);
     } finally {
@@ -135,10 +126,8 @@ export function useFileChanges(
 
   const clearIdleHandle = useCallback(() => {
     if (idleHandleRef.current === null) return;
-    if (idleHandleModeRef.current === "idle") {
-      const cancelIdle = (window as any).cancelIdleCallback as
-        | ((id: number) => void)
-        | undefined;
+    if (idleHandleModeRef.current === 'idle') {
+      const cancelIdle = (window as any).cancelIdleCallback as ((id: number) => void) | undefined;
       cancelIdle?.(idleHandleRef.current);
     } else {
       clearTimeout(idleHandleRef.current);
@@ -162,16 +151,15 @@ export function useFileChanges(
       | undefined;
 
     if (requestIdle) {
-      idleHandleModeRef.current = "idle";
+      idleHandleModeRef.current = 'idle';
       idleHandleRef.current = requestIdle(run, { timeout: idleIntervalMs });
     } else {
-      idleHandleModeRef.current = "timeout";
+      idleHandleModeRef.current = 'timeout';
       idleHandleRef.current = window.setTimeout(run, idleIntervalMs);
     }
   }, [clearIdleHandle, fetchFileChanges, idleIntervalMs]);
 
-  const shouldPoll =
-    Boolean(taskPath) && isActive && isDocumentVisible && isWindowFocused;
+  const shouldPoll = Boolean(taskPath) && isActive && isDocumentVisible && isWindowFocused;
 
   useEffect(() => {
     shouldPollRef.current = shouldPoll;
@@ -189,13 +177,7 @@ export function useFileChanges(
     return () => {
       clearIdleHandle();
     };
-  }, [
-    taskPath,
-    shouldPoll,
-    fetchFileChanges,
-    scheduleIdleRefresh,
-    clearIdleHandle,
-  ]);
+  }, [taskPath, shouldPoll, fetchFileChanges, scheduleIdleRefresh, clearIdleHandle]);
 
   useEffect(() => {
     if (!shouldPoll) return;
