@@ -10,7 +10,7 @@ export interface FileChangesOptions {
 
 export function useFileChanges(taskPath: string, options?: FileChangesOptions) {
   const snapshot = useGitStatus(taskPath, {
-    active: options?.active,
+    isActive: options?.active,
     pollIntervalMs: options?.pollIntervalMs,
   });
 
