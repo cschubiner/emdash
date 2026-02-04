@@ -69,7 +69,7 @@ export function useFileChanges(taskPath: string) {
     // Initial load with loading state
     fetchFileChanges(true);
 
-    const interval = setInterval(() => fetchFileChanges(false), 5000);
+    const interval = setInterval(() => fetchFileChanges(false), 15000);
 
     // Listen for file change events and refresh immediately
     const unsubscribe = subscribeToFileChanges((event) => {
