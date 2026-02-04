@@ -161,6 +161,7 @@ function loadiTerm2Config(): TerminalConfig | null {
       jsonContent = execSync(`plutil -convert json -o - "${plistPath}"`, {
         encoding: 'utf8',
         maxBuffer: 10 * 1024 * 1024, // 10MB
+        stdio: ['ignore', 'pipe', 'ignore'],
       });
     } catch {
       // If plutil fails, try reading as XML plist
@@ -329,6 +330,7 @@ function loadTerminalAppConfig(): TerminalConfig | null {
       jsonContent = execSync(`plutil -convert json -o - "${plistPath}"`, {
         encoding: 'utf8',
         maxBuffer: 10 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
       });
     } catch {
       return null;
