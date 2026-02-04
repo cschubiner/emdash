@@ -62,11 +62,7 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-async function listFiles(
-  root: string,
-  includeDirs: boolean,
-  maxEntries: number
-): Promise<Item[]> {
+async function listFiles(root: string, includeDirs: boolean, maxEntries: number): Promise<Item[]> {
   const items: Item[] = [];
   const stack: string[] = ['.'];
   let steps = 0;
