@@ -58,6 +58,10 @@ async function safeStat(p: string): Promise<fs.Stats | null> {
   }
 }
 
+async function pathExists(p: string): Promise<boolean> {
+  return !!(await safeStat(p));
+}
+
 function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
@@ -126,7 +130,7 @@ export function registerFsIpc(): void {
       const root = args.root;
       const includeDirs = args.includeDirs ?? true;
       const maxEntries = Math.min(Math.max(args.maxEntries ?? 5000, 100), 20000);
-      if (!root || !fs.existsSync(root)) {
+      if (!root || !(await pathExists(root))) {
         return { success: false, error: 'Invalid root path' };
       }
       const items = await listFiles(root, includeDirs, maxEntries);
@@ -143,7 +147,8 @@ export function registerFsIpc(): void {
       try {
         const { root, relPath } = args;
         const maxBytes = Math.min(Math.max(args.maxBytes ?? 200 * 1024, 1024), 5 * 1024 * 1024);
-        if (!root || !fs.existsSync(root)) return { success: false, error: 'Invalid root path' };
+        if (!root || !(await pathExists(root)))
+          return { success: false, error: 'Invalid root path' };
         if (!relPath) return { success: false, error: 'Invalid relPath' };
 
         // Resolve and ensure within root
@@ -158,15 +163,15 @@ export function registerFsIpc(): void {
         const size = st.size;
         let truncated = false;
         let content: string;
-        const fd = fs.openSync(abs, 'r');
+        const fileHandle = await fs.promises.open(abs, 'r');
         try {
           const bytesToRead = Math.min(size, maxBytes);
           const buf = Buffer.alloc(bytesToRead);
-          fs.readSync(fd, buf, 0, bytesToRead, 0);
+          await fileHandle.read(buf, 0, bytesToRead, 0);
           content = buf.toString('utf8');
           truncated = size > bytesToRead;
         } finally {
-          fs.closeSync(fd);
+          await fileHandle.close();
         }
 
         return { success: true, path: relPath, size, truncated, content };
@@ -181,7 +186,7 @@ export function registerFsIpc(): void {
   ipcMain.handle('fs:read-image', async (_event, args: { root: string; relPath: string }) => {
     try {
       const { root, relPath } = args;
-      if (!root || !fs.existsSync(root)) return { success: false, error: 'Invalid root path' };
+      if (!root || !(await pathExists(root))) return { success: false, error: 'Invalid root path' };
       if (!relPath) return { success: false, error: 'Invalid relPath' };
 
       // Resolve and ensure within root
@@ -200,7 +205,7 @@ export function registerFsIpc(): void {
       }
 
       // Read file as base64
-      const buffer = fs.readFileSync(abs);
+      const buffer = await fs.promises.readFile(abs);
       const base64 = buffer.toString('base64');
 
       // Determine MIME type
@@ -300,37 +305,27 @@ export function registerFsIpc(): void {
     '.lock',
   ]);
 
-  // Check if file is likely binary
-  const isBinaryFile = (filePath: string): boolean => {
-    // First check extension
-    const ext = path.extname(filePath).toLowerCase();
-    if (BINARY_EXTENSIONS.has(ext)) return true;
+  // Check if buffer is likely binary
+  const isBinaryBuffer = (buffer: Buffer): boolean => {
+    const bytesRead = Math.min(buffer.length, BINARY_CHECK_BYTES);
+    if (bytesRead === 0) return false;
 
-    try {
-      const fd = fs.openSync(filePath, 'r');
-      const buffer = Buffer.alloc(BINARY_CHECK_BYTES);
-      const bytesRead = fs.readSync(fd, buffer, 0, BINARY_CHECK_BYTES, 0);
-      fs.closeSync(fd);
-
-      // Check for null bytes (common in binary files)
-      for (let i = 0; i < bytesRead; i++) {
-        if (buffer[i] === 0) return true;
-      }
-
-      // Check if mostly non-printable characters
-      let nonPrintable = 0;
-      for (let i = 0; i < Math.min(bytesRead, 512); i++) {
-        const byte = buffer[i];
-        if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) {
-          nonPrintable++;
-        }
-      }
-
-      // If more than 30% non-printable, likely binary
-      return nonPrintable > bytesRead * 0.3;
-    } catch {
-      return false; // Assume text if we can't read it, let the search handle the error
+    // Check for null bytes (common in binary files)
+    for (let i = 0; i < bytesRead; i++) {
+      if (buffer[i] === 0) return true;
     }
+
+    // Check if mostly non-printable characters
+    let nonPrintable = 0;
+    for (let i = 0; i < Math.min(bytesRead, 512); i++) {
+      const byte = buffer[i];
+      if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) {
+        nonPrintable++;
+      }
+    }
+
+    // If more than 30% non-printable, likely binary
+    return nonPrintable > bytesRead * 0.3;
   };
 
   // Search for content in files - OPTIMIZED VERSION
@@ -352,7 +347,8 @@ export function registerFsIpc(): void {
           fileExtensions = [],
         } = options;
 
-        if (!root || !fs.existsSync(root)) return { success: false, error: 'Invalid root path' };
+        if (!root || !(await pathExists(root)))
+          return { success: false, error: 'Invalid root path' };
         if (!query || query.length < 2)
           return { success: false, error: 'Query too short (min 2 chars)' };
 
@@ -401,11 +397,10 @@ export function registerFsIpc(): void {
           try {
             filesSearched++;
 
-            // Check if binary file first
-            if (isBinaryFile(filePath)) return;
-
-            // Read file in chunks for better memory usage
-            const content = await fs.promises.readFile(filePath, 'utf8');
+            // Read file once as buffer, then skip if binary
+            const raw = await fs.promises.readFile(filePath);
+            if (isBinaryBuffer(raw)) return;
+            const content = raw.toString('utf8');
 
             // Quick check if query exists at all (much faster)
             const contentToSearch = caseSensitive ? content : content.toLowerCase();
@@ -497,6 +492,7 @@ export function registerFsIpc(): void {
         for (let i = 0; i < files.length && totalMatches < maxResults; i += BATCH_SIZE) {
           const batch = files.slice(i, i + BATCH_SIZE);
           await Promise.all(batch.map((file) => searchInFile(file)));
+          await yieldToEventLoop();
         }
 
         return { success: true, results };
@@ -513,9 +509,9 @@ export function registerFsIpc(): void {
     async (_event, args: { taskPath: string; srcPath: string; subdir?: string }) => {
       try {
         const { taskPath, srcPath } = args;
-        if (!taskPath || !fs.existsSync(taskPath))
+        if (!taskPath || !(await pathExists(taskPath)))
           return { success: false, error: 'Invalid taskPath' };
-        if (!srcPath || !fs.existsSync(srcPath))
+        if (!srcPath || !(await pathExists(srcPath)))
           return { success: false, error: 'Invalid srcPath' };
 
         const ext = path.extname(srcPath).toLowerCase();
@@ -524,20 +520,25 @@ export function registerFsIpc(): void {
         }
 
         const baseDir = path.join(taskPath, '.emdash', args.subdir || DEFAULT_ATTACHMENTS_SUBDIR);
-        fs.mkdirSync(baseDir, { recursive: true });
+        await fs.promises.mkdir(baseDir, { recursive: true });
 
         const baseName = path.basename(srcPath);
         let destName = baseName;
         let counter = 1;
         let destAbs = path.join(baseDir, destName);
-        while (fs.existsSync(destAbs)) {
-          const name = path.basename(baseName, ext);
-          destName = `${name}-${counter}${ext}`;
-          destAbs = path.join(baseDir, destName);
-          counter++;
+        while (true) {
+          try {
+            await fs.promises.access(destAbs);
+            const name = path.basename(baseName, ext);
+            destName = `${name}-${counter}${ext}`;
+            destAbs = path.join(baseDir, destName);
+            counter++;
+          } catch {
+            break;
+          }
         }
 
-        fs.copyFileSync(srcPath, destAbs);
+        await fs.promises.copyFile(srcPath, destAbs);
 
         const relFromTask = path.relative(taskPath, destAbs);
         return {
@@ -559,7 +560,8 @@ export function registerFsIpc(): void {
     async (_event, args: { root: string; relPath: string; content: string; mkdirs?: boolean }) => {
       try {
         const { root, relPath, content, mkdirs = true } = args;
-        if (!root || !fs.existsSync(root)) return { success: false, error: 'Invalid root path' };
+        if (!root || !(await pathExists(root)))
+          return { success: false, error: 'Invalid root path' };
         if (!relPath) return { success: false, error: 'Invalid relPath' };
 
         const abs = path.resolve(root, relPath);
@@ -567,9 +569,9 @@ export function registerFsIpc(): void {
         if (!abs.startsWith(normRoot)) return { success: false, error: 'Path escapes root' };
 
         const dir = path.dirname(abs);
-        if (mkdirs) fs.mkdirSync(dir, { recursive: true });
+        if (mkdirs) await fs.promises.mkdir(dir, { recursive: true });
         try {
-          fs.writeFileSync(abs, content, 'utf8');
+          await fs.promises.writeFile(abs, content, 'utf8');
         } catch (e: any) {
           // Surface permission issues to renderer (Plan Mode lock likely)
           if ((e?.code || '').toUpperCase() === 'EACCES') {
@@ -595,29 +597,29 @@ export function registerFsIpc(): void {
   ipcMain.handle('fs:remove', async (_event, args: { root: string; relPath: string }) => {
     try {
       const { root, relPath } = args;
-      if (!root || !fs.existsSync(root)) return { success: false, error: 'Invalid root path' };
+      if (!root || !(await pathExists(root))) return { success: false, error: 'Invalid root path' };
       if (!relPath) return { success: false, error: 'Invalid relPath' };
       const abs = path.resolve(root, relPath);
       const normRoot = path.resolve(root) + path.sep;
       if (!abs.startsWith(normRoot)) return { success: false, error: 'Path escapes root' };
-      if (!fs.existsSync(abs)) return { success: true };
+      if (!(await pathExists(abs))) return { success: true };
       const st = await safeStat(abs);
       if (st && st.isDirectory()) return { success: false, error: 'Is a directory' };
       try {
-        fs.unlinkSync(abs);
+        await fs.promises.unlink(abs);
       } catch (e: any) {
         // Try to relax permissions and retry (useful after a plan lock)
         try {
           const dir = path.dirname(abs);
           const dst = await safeStat(dir);
-          if (dst) fs.chmodSync(dir, (dst.mode & 0o7777) | 0o222);
+          if (dst) await fs.promises.chmod(dir, (dst.mode & 0o7777) | 0o222);
         } catch {}
         try {
           const fst = await safeStat(abs);
-          if (fst) fs.chmodSync(abs, (fst.mode & 0o7777) | 0o222);
+          if (fst) await fs.promises.chmod(abs, (fst.mode & 0o7777) | 0o222);
         } catch {}
         try {
-          fs.unlinkSync(abs);
+          await fs.promises.unlink(abs);
         } catch (e2: any) {
           if ((e2?.code || '').toUpperCase() === 'EACCES') {
             emitPlanEvent({
@@ -642,18 +644,18 @@ export function registerFsIpc(): void {
   ipcMain.handle('fs:getProjectConfig', async (_event, args: { projectPath: string }) => {
     try {
       const { projectPath } = args;
-      if (!projectPath || !fs.existsSync(projectPath)) {
+      if (!projectPath || !(await pathExists(projectPath))) {
         return { success: false, error: 'Invalid project path' };
       }
 
       const configPath = path.join(projectPath, '.emdash.json');
 
       // Create with defaults if missing
-      if (!fs.existsSync(configPath)) {
-        fs.writeFileSync(configPath, DEFAULT_EMDASH_CONFIG, 'utf8');
+      if (!(await pathExists(configPath))) {
+        await fs.promises.writeFile(configPath, DEFAULT_EMDASH_CONFIG, 'utf8');
       }
 
-      const content = fs.readFileSync(configPath, 'utf8');
+      const content = await fs.promises.readFile(configPath, 'utf8');
       return { success: true, path: configPath, content };
     } catch (error) {
       console.error('fs:getProjectConfig failed:', error);
@@ -667,7 +669,7 @@ export function registerFsIpc(): void {
     async (_event, args: { projectPath: string; content: string }) => {
       try {
         const { projectPath, content } = args;
-        if (!projectPath || !fs.existsSync(projectPath)) {
+        if (!projectPath || !(await pathExists(projectPath))) {
           return { success: false, error: 'Invalid project path' };
         }
 
@@ -679,7 +681,7 @@ export function registerFsIpc(): void {
         }
 
         const configPath = path.join(projectPath, '.emdash.json');
-        fs.writeFileSync(configPath, content, 'utf8');
+        await fs.promises.writeFile(configPath, content, 'utf8');
         return { success: true, path: configPath };
       } catch (error) {
         console.error('fs:saveProjectConfig failed:', error);

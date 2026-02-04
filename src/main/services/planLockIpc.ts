@@ -6,37 +6,33 @@ function isWindows() {
   return process.platform === 'win32';
 }
 
-function isSymlink(p: string) {
-  try {
-    const st = fs.lstatSync(p);
-    return st.isSymbolicLink();
-  } catch {
-    return false;
-  }
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 type Entry = { p: string; m: number };
 
-function collectPaths(root: string) {
+async function collectPaths(root: string): Promise<string[]> {
   const result: string[] = [];
   const stack = ['.'];
+  let steps = 0;
   while (stack.length) {
     const rel = stack.pop()!;
     const abs = path.join(root, rel);
-    if (isSymlink(abs)) continue;
     let st: fs.Stats;
     try {
-      st = fs.statSync(abs);
+      st = await fs.promises.lstat(abs);
     } catch {
       continue;
     }
+    if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
       // Skip our internal folder so we can write logs/policies
       if (rel === '.emdash' || rel.startsWith('.emdash' + path.sep)) continue;
       result.push(rel);
       let entries: string[] = [];
       try {
-        entries = fs.readdirSync(abs);
+        entries = await fs.promises.readdir(abs);
       } catch {
         continue;
       }
@@ -46,6 +42,10 @@ function collectPaths(root: string) {
       }
     } else if (st.isFile()) {
       result.push(rel);
+    }
+    steps += 1;
+    if (steps % 100 === 0) {
+      await yieldToEventLoop();
     }
   }
   return result;
@@ -60,16 +60,19 @@ function chmodNoWrite(mode: number, isDir: boolean): number {
   return noWrite & 0o7777;
 }
 
-function applyLock(root: string): { success: boolean; changed: number; error?: string } {
+async function applyLock(
+  root: string
+): Promise<{ success: boolean; changed: number; error?: string }> {
   try {
-    const entries = collectPaths(root);
+    const entries = await collectPaths(root);
     const state: Entry[] = [];
     let changed = 0;
+    let steps = 0;
     for (const rel of entries) {
       const abs = path.join(root, rel);
       let st: fs.Stats;
       try {
-        st = fs.statSync(abs);
+        st = await fs.promises.stat(abs);
       } catch {
         continue;
       }
@@ -78,20 +81,24 @@ function applyLock(root: string): { success: boolean; changed: number; error?: s
       const nextMode = chmodNoWrite(prevMode, isDir);
       if (nextMode !== prevMode) {
         try {
-          fs.chmodSync(abs, nextMode);
+          await fs.promises.chmod(abs, nextMode);
           state.push({ p: rel, m: prevMode });
           changed++;
         } catch {}
+      }
+      steps += 1;
+      if (steps % 100 === 0) {
+        await yieldToEventLoop();
       }
     }
     // Persist lock state
     const baseDir = path.join(root, '.emdash');
     try {
-      fs.mkdirSync(baseDir, { recursive: true });
+      await fs.promises.mkdir(baseDir, { recursive: true });
     } catch {}
     const statePath = path.join(baseDir, '.planlock.json');
     try {
-      fs.writeFileSync(statePath, JSON.stringify(state), 'utf8');
+      await fs.promises.writeFile(statePath, JSON.stringify(state), 'utf8');
     } catch {}
     return { success: true, changed };
   } catch (e: any) {
@@ -99,13 +106,19 @@ function applyLock(root: string): { success: boolean; changed: number; error?: s
   }
 }
 
-function releaseLock(root: string): { success: boolean; restored: number; error?: string } {
+async function releaseLock(
+  root: string
+): Promise<{ success: boolean; restored: number; error?: string }> {
   try {
     const statePath = path.join(root, '.emdash', '.planlock.json');
-    if (!fs.existsSync(statePath)) return { success: true, restored: 0 };
+    try {
+      await fs.promises.access(statePath);
+    } catch {
+      return { success: true, restored: 0 };
+    }
     let raw = '';
     try {
-      raw = fs.readFileSync(statePath, 'utf8');
+      raw = await fs.promises.readFile(statePath, 'utf8');
     } catch {}
     let entries: Entry[] = [];
     try {
@@ -115,13 +128,13 @@ function releaseLock(root: string): { success: boolean; restored: number; error?
     for (const ent of entries) {
       try {
         const abs = path.join(root, ent.p);
-        fs.chmodSync(abs, ent.m);
+        await fs.promises.chmod(abs, ent.m);
         restored++;
       } catch {}
     }
     // Cleanup state file
     try {
-      fs.unlinkSync(statePath);
+      await fs.promises.unlink(statePath);
     } catch {}
     return { success: true, restored };
   } catch (e: any) {

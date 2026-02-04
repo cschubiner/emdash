@@ -20,7 +20,16 @@ const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
 export function registerGitIpc() {
-  function resolveGitBin(): string {
+  const pathExists = async (p: string): Promise<boolean> => {
+    try {
+      await fs.promises.access(p);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  async function resolveGitBin(): Promise<string> {
     // Allow override via env
     const fromEnv = (process.env.GIT_PATH || '').trim();
     const candidates = [
@@ -31,13 +40,19 @@ export function registerGitIpc() {
     ].filter(Boolean) as string[];
     for (const p of candidates) {
       try {
-        if (p && fs.existsSync(p)) return p;
+        if (p && (await pathExists(p))) return p;
       } catch {}
     }
     // Last resort: try /usr/bin/env git
     return 'git';
   }
-  const GIT = resolveGitBin();
+  let gitBinPromise: Promise<string> | null = null;
+  const getGitBin = () => {
+    if (!gitBinPromise) {
+      gitBinPromise = resolveGitBin();
+    }
+    return gitBinPromise;
+  };
   // Git: Status (moved from Codex IPC)
   ipcMain.handle('git:get-status', async (_, taskPath: string) => {
     try {
@@ -309,7 +324,7 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
               `gh-pr-body-${Date.now()}-${Math.random().toString(36).substring(7)}.txt`
             );
             // Write body with actual newlines preserved
-            fs.writeFileSync(bodyFile, body, 'utf8');
+            await fs.promises.writeFile(bodyFile, body, 'utf8');
             flags.push(`--body-file ${JSON.stringify(bodyFile)}`);
           } catch (writeError) {
             log.warn('Failed to write body to temp file, falling back to --body flag', {
@@ -344,9 +359,9 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           stderr = result.stderr || '';
         } finally {
           // Clean up temp file if it was created
-          if (bodyFile && fs.existsSync(bodyFile)) {
+          if (bodyFile) {
             try {
-              fs.unlinkSync(bodyFile);
+              await fs.promises.unlink(bodyFile);
             } catch (unlinkError) {
               log.debug('Failed to delete temp body file', { bodyFile, unlinkError });
             }
@@ -601,10 +616,11 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
     const { taskPath } = args || ({} as { taskPath: string });
 
     // Early exit for missing/invalid path
-    if (!taskPath || !fs.existsSync(taskPath)) {
+    if (!taskPath || !(await pathExists(taskPath))) {
       log.warn(`getBranchStatus: path does not exist: ${taskPath}`);
       return { success: false, error: 'Path does not exist' };
     }
+    const GIT = await getGitBin();
 
     // Check if it's a git repo - expected to fail often for non-git paths
     try {
@@ -779,6 +795,7 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
       const { repoPath, oldBranch, newBranch } = args;
       try {
         log.info('Renaming branch:', { repoPath, oldBranch, newBranch });
+        const GIT = await getGitBin();
 
         // Check remote tracking BEFORE rename (git branch -m renames config section)
         let remotePushed = false;

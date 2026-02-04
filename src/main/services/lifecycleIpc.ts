@@ -13,7 +13,7 @@ export function registerLifecycleIpc(): void {
       }
     ) => {
       try {
-        const script = lifecycleScriptsService.getSetupScript(args.projectPath);
+        const script = await lifecycleScriptsService.getSetupScript(args.projectPath);
         return { success: true, script };
       } catch (error) {
         log.error('Failed to get setup script:', error);

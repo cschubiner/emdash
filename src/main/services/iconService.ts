@@ -16,9 +16,9 @@ function bufferToDataUrl(buf: Buffer, contentType: string): string {
   return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
-function readFileAsDataUrl(abs: string): string | null {
+async function readFileAsDataUrl(abs: string): Promise<string | null> {
   try {
-    const data = fs.readFileSync(abs);
+    const data = await fs.promises.readFile(abs);
     const ext = path.extname(abs).toLowerCase();
     const mime =
       ext === '.svg'
@@ -131,6 +131,14 @@ export async function resolveServiceIcon(opts: {
   const service = opts.service?.trim();
   if (!service) return { ok: false };
   const slug = toSlug(service);
+  const fileExists = async (p: string): Promise<boolean> => {
+    try {
+      await fs.promises.access(p);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   // 1) Task overrides
   if (opts.taskPath) {
@@ -139,8 +147,8 @@ export async function resolveServiceIcon(opts: {
       path.join(p, `${slug}${ext}`)
     );
     for (const abs of candidates) {
-      if (fs.existsSync(abs)) {
-        const dataUrl = readFileAsDataUrl(abs);
+      if (await fileExists(abs)) {
+        const dataUrl = await readFileAsDataUrl(abs);
         if (dataUrl) return { ok: true, dataUrl };
       }
     }
@@ -149,11 +157,11 @@ export async function resolveServiceIcon(opts: {
   // 2) Cache under userData
   const cacheDir = path.join(app.getPath('userData'), 'icons');
   try {
-    fs.mkdirSync(cacheDir, { recursive: true });
+    await fs.promises.mkdir(cacheDir, { recursive: true });
   } catch {}
   const cacheFile = path.join(cacheDir, `${slug}.ico`);
-  if (fs.existsSync(cacheFile)) {
-    const dataUrl = readFileAsDataUrl(cacheFile);
+  if (await fileExists(cacheFile)) {
+    const dataUrl = await readFileAsDataUrl(cacheFile);
     if (dataUrl) return { ok: true, dataUrl };
   }
 
@@ -166,7 +174,7 @@ export async function resolveServiceIcon(opts: {
       const fetched = (await fetchHttps(ddgUrl)) || (await fetchHttps(directUrl));
       if (fetched) {
         try {
-          fs.writeFileSync(cacheFile, fetched.data);
+          await fs.promises.writeFile(cacheFile, fetched.data);
         } catch {}
         const dataUrl = bufferToDataUrl(fetched.data, fetched.contentType);
         return { ok: true, dataUrl };

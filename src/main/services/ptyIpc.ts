@@ -131,6 +131,14 @@ export function registerPtyIpc(): void {
               const path = require('path');
               const os = require('os');
               const crypto = require('crypto');
+              const pathExists = async (p: string): Promise<boolean> => {
+                try {
+                  await fs.promises.access(p);
+                  return true;
+                } catch {
+                  return false;
+                }
+              };
 
               // Check if this is Claude by looking at the shell
               const isClaudeOrSimilar = shell.includes('claude') || shell.includes('aider');
@@ -151,17 +159,17 @@ export function registerPtyIpc(): void {
                 let sessionExists = false;
 
                 // Check if the hash-based directory exists
-                sessionExists = fs.existsSync(claudeHashDir);
+                sessionExists = await pathExists(claudeHashDir);
 
                 // If not, check for path-based directory
                 if (!sessionExists) {
-                  sessionExists = fs.existsSync(claudePathDir);
+                  sessionExists = await pathExists(claudePathDir);
                 }
 
                 // If still not found, scan the projects directory for any matching directory
-                if (!sessionExists && fs.existsSync(projectsDir)) {
+                if (!sessionExists && (await pathExists(projectsDir))) {
                   try {
-                    const dirs = fs.readdirSync(projectsDir);
+                    const dirs = await fs.promises.readdir(projectsDir);
                     // Check if any directory contains part of the working directory path
                     const cwdParts = cwd.split('/').filter((p) => p.length > 0);
                     const lastParts = cwdParts.slice(-3).join('-'); // Use last 3 parts of path
@@ -346,7 +354,7 @@ export function registerPtyIpc(): void {
 
   ipcMain.handle('terminal:getTheme', async () => {
     try {
-      const config = detectAndLoadTerminalConfig();
+      const config = await detectAndLoadTerminalConfig();
       if (config) {
         return { ok: true, config };
       }
@@ -536,7 +544,7 @@ function maybeMarkProviderFinish(
 
   if (exitCode === 0) {
     const providerName = getProvider(parsed.providerId)?.name ?? parsed.providerId;
-    showCompletionNotification(providerName);
+    void showCompletionNotification(providerName);
   }
 }
 
@@ -544,9 +552,9 @@ function maybeMarkProviderFinish(
  * Show a system notification for provider completion.
  * Only shows if: notifications are enabled, supported, and app is not focused.
  */
-function showCompletionNotification(providerName: string) {
+async function showCompletionNotification(providerName: string) {
   try {
-    const settings = getAppSettings();
+    const settings = await getAppSettings();
 
     if (!settings.notifications?.enabled) return;
     if (!Notification.isSupported()) return;

@@ -60,17 +60,25 @@ interface EmdashConfig {
 
 export class WorktreeService {
   private worktrees = new Map<string, WorktreeInfo>();
+  private async pathExists(p: string): Promise<boolean> {
+    try {
+      await fs.promises.access(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * Read .emdash.json config from project root
    */
-  private readProjectConfig(projectPath: string): EmdashConfig | null {
+  private async readProjectConfig(projectPath: string): Promise<EmdashConfig | null> {
     try {
       const configPath = path.join(projectPath, '.emdash.json');
-      if (!fs.existsSync(configPath)) {
+      if (!(await this.pathExists(configPath))) {
         return null;
       }
-      const content = fs.readFileSync(configPath, 'utf8');
+      const content = await fs.promises.readFile(configPath, 'utf8');
       return JSON.parse(content) as EmdashConfig;
     } catch {
       return null;
@@ -80,8 +88,8 @@ export class WorktreeService {
   /**
    * Get preserve patterns for a project (config or defaults)
    */
-  private getPreservePatterns(projectPath: string): string[] {
-    const config = this.readProjectConfig(projectPath);
+  private async getPreservePatterns(projectPath: string): Promise<string[]> {
+    const config = await this.readProjectConfig(projectPath);
     if (config?.preservePatterns && Array.isArray(config.preservePatterns)) {
       return config.preservePatterns;
     }
@@ -127,7 +135,7 @@ export class WorktreeService {
 
     try {
       const { getAppSettings } = await import('../settings');
-      const settings = getAppSettings();
+      const settings = await getAppSettings();
       const prefix = settings?.repository?.branchPrefix || 'emdash';
       branchName = this.sanitizeBranchName(`${prefix}/${sluggedName}-${hash}`);
       worktreePath = path.join(projectPath, '..', `worktrees/${sluggedName}-${hash}`);
@@ -136,15 +144,13 @@ export class WorktreeService {
       log.info(`Creating worktree: ${branchName} -> ${worktreePath}`);
 
       // Check if worktree path already exists
-      if (fs.existsSync(worktreePath)) {
+      if (await this.pathExists(worktreePath)) {
         throw new Error(`Worktree directory already exists: ${worktreePath}`);
       }
 
       // Ensure worktrees directory exists
       const worktreesDir = path.dirname(worktreePath);
-      if (!fs.existsSync(worktreesDir)) {
-        fs.mkdirSync(worktreesDir, { recursive: true });
-      }
+      await fs.promises.mkdir(worktreesDir, { recursive: true });
 
       // Use provided baseRef override or resolve from project settings
       let baseRefInfo: BaseRefInfo;
@@ -179,13 +185,13 @@ export class WorktreeService {
       log.debug('Git worktree stderr:', stderr);
 
       // Verify the worktree was actually created
-      if (!fs.existsSync(worktreePath)) {
+      if (!(await this.pathExists(worktreePath))) {
         throw new Error(`Worktree directory was not created: ${worktreePath}`);
       }
 
       // Preserve .env and other gitignored config files from source to worktree
       try {
-        const patterns = this.getPreservePatterns(projectPath);
+        const patterns = await this.getPreservePatterns(projectPath);
         await this.preserveFilesToWorktree(projectPath, worktreePath, patterns);
       } catch (preserveErr) {
         log.warn('Failed to preserve files to worktree (continuing):', preserveErr);
@@ -269,7 +275,7 @@ export class WorktreeService {
       let managedPrefixes: string[] = ['emdash', 'agent', 'pr', 'orch'];
       try {
         const { getAppSettings } = await import('../settings');
-        const settings = getAppSettings();
+        const settings = await getAppSettings();
         const p = settings?.repository?.branchPrefix;
         if (p) managedPrefixes = Array.from(new Set([p, ...managedPrefixes]));
       } catch {}
@@ -430,7 +436,7 @@ export class WorktreeService {
       }
 
       // Ensure directory is removed even if git command failed
-      if (fs.existsSync(pathToRemove)) {
+      if (await this.pathExists(pathToRemove)) {
         // SAFETY: Double-check we're not removing the main repo before filesystem operations
         const normalizedPathToRemove = path.resolve(pathToRemove);
         const normalizedProjectPath = path.resolve(projectPath);
@@ -1012,20 +1018,19 @@ export class WorktreeService {
   ): Promise<'copied' | 'skipped' | 'error'> {
     try {
       // Check if destination already exists
-      if (fs.existsSync(destPath)) {
+      try {
+        await fs.promises.access(destPath);
         return 'skipped';
-      }
+      } catch {}
 
       // Ensure destination directory exists
       const destDir = path.dirname(destPath);
-      if (!fs.existsSync(destDir)) {
-        fs.mkdirSync(destDir, { recursive: true });
-      }
+      await fs.promises.mkdir(destDir, { recursive: true });
 
       // Copy file preserving mode
-      const content = fs.readFileSync(sourcePath);
-      const stat = fs.statSync(sourcePath);
-      fs.writeFileSync(destPath, content, { mode: stat.mode });
+      await fs.promises.copyFile(sourcePath, destPath);
+      const stat = await fs.promises.stat(sourcePath);
+      await fs.promises.chmod(destPath, stat.mode);
 
       return 'copied';
     } catch (error) {
@@ -1083,7 +1088,7 @@ export class WorktreeService {
       const destPath = path.join(destDir, file);
 
       // Verify source file exists
-      if (!fs.existsSync(sourcePath)) {
+      if (!(await this.pathExists(sourcePath))) {
         log.debug(`Source file does not exist, skipping: ${sourcePath}`);
         continue;
       }
@@ -1146,14 +1151,12 @@ export class WorktreeService {
       path.join(projectPath, '..', `worktrees/${sluggedName}-${Date.now()}`);
     const worktreePath = path.resolve(targetPath);
 
-    if (fs.existsSync(worktreePath)) {
+    if (await this.pathExists(worktreePath)) {
       throw new Error(`Worktree directory already exists: ${worktreePath}`);
     }
 
     const worktreesDir = path.dirname(worktreePath);
-    if (!fs.existsSync(worktreesDir)) {
-      fs.mkdirSync(worktreesDir, { recursive: true });
-    }
+    await fs.promises.mkdir(worktreesDir, { recursive: true });
 
     try {
       await execFileAsync('git', ['worktree', 'add', worktreePath, branchName], {
@@ -1165,13 +1168,13 @@ export class WorktreeService {
       );
     }
 
-    if (!fs.existsSync(worktreePath)) {
+    if (!(await this.pathExists(worktreePath))) {
       throw new Error(`Worktree directory was not created: ${worktreePath}`);
     }
 
     // Preserve .env and other gitignored config files from source to worktree
     try {
-      const patterns = this.getPreservePatterns(projectPath);
+      const patterns = await this.getPreservePatterns(projectPath);
       await this.preserveFilesToWorktree(projectPath, worktreePath, patterns);
     } catch (preserveErr) {
       log.warn('Failed to preserve files to worktree (continuing):', preserveErr);

@@ -1,13 +1,22 @@
-import { existsSync } from 'fs';
+import { promises as fs } from 'fs';
 import { join } from 'path';
 import { spawn } from 'child_process';
 
-function pickNodeInstallCmd(target: string): string[] {
+const pathExists = async (p: string): Promise<boolean> => {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+async function pickNodeInstallCmd(target: string): Promise<string[]> {
   // Prefer package manager based on lockfile presence
-  if (existsSync(join(target, 'pnpm-lock.yaml'))) {
+  if (await pathExists(join(target, 'pnpm-lock.yaml'))) {
     return ['pnpm install --frozen-lockfile', 'pnpm install', 'npm ci', 'npm install'];
   }
-  if (existsSync(join(target, 'yarn.lock'))) {
+  if (await pathExists(join(target, 'yarn.lock'))) {
     // Support modern Yarn (Berry) and classic Yarn
     return [
       'yarn install --immutable',
@@ -17,10 +26,10 @@ function pickNodeInstallCmd(target: string): string[] {
       'npm install',
     ];
   }
-  if (existsSync(join(target, 'bun.lockb'))) {
+  if (await pathExists(join(target, 'bun.lockb'))) {
     return ['bun install', 'npm ci', 'npm install'];
   }
-  if (existsSync(join(target, 'package-lock.json'))) {
+  if (await pathExists(join(target, 'package-lock.json'))) {
     return ['npm ci', 'npm install'];
   }
   return ['npm install'];
@@ -47,10 +56,10 @@ function runInBackground(cmd: string | string[], cwd: string) {
 export async function ensureProjectPrepared(targetPath: string) {
   try {
     // Node projects: if package.json exists and node_modules missing, install deps
-    const isNode = existsSync(join(targetPath, 'package.json'));
-    const hasNodeModules = existsSync(join(targetPath, 'node_modules'));
+    const isNode = await pathExists(join(targetPath, 'package.json'));
+    const hasNodeModules = await pathExists(join(targetPath, 'node_modules'));
     if (isNode && !hasNodeModules) {
-      const cmds = pickNodeInstallCmd(targetPath);
+      const cmds = await pickNodeInstallCmd(targetPath);
       runInBackground(cmds, targetPath);
     }
 

@@ -2,10 +2,19 @@ import { app } from 'electron';
 // Optional build-time defaults for distribution bundles
 // Resolve robustly across dev and packaged layouts.
 let appConfig: { posthogHost?: string; posthogKey?: string } = {};
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { promises as fs } from 'fs';
 import { join } from 'path';
 
-function loadAppConfig(): { posthogHost?: string; posthogKey?: string } {
+const pathExists = async (p: string): Promise<boolean> => {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+async function loadAppConfig(): Promise<{ posthogHost?: string; posthogKey?: string }> {
   try {
     const dir = __dirname; // e.g., dist/main/main in dev builds
     const candidates = [
@@ -13,8 +22,8 @@ function loadAppConfig(): { posthogHost?: string; posthogKey?: string } {
       join(dir, '..', 'appConfig.json'), // dist/main/appConfig.json (CI injection path)
     ];
     for (const p of candidates) {
-      if (existsSync(p)) {
-        const raw = readFileSync(p, 'utf8');
+      if (await pathExists(p)) {
+        const raw = await fs.readFile(p, 'utf8');
         return JSON.parse(raw);
       }
     }
@@ -23,7 +32,6 @@ function loadAppConfig(): { posthogHost?: string; posthogKey?: string } {
   }
   return {};
 }
-appConfig = loadAppConfig();
 
 type TelemetryEvent =
   // App lifecycle
@@ -137,16 +145,16 @@ function getInstanceIdPath(): string {
   return join(dir, 'telemetry.json');
 }
 
-function loadOrCreateState(): {
+async function loadOrCreateState(): Promise<{
   instanceId: string;
   enabledOverride?: boolean;
   onboardingSeen?: boolean;
   lastActiveDate?: string;
-} {
+}> {
   try {
     const file = getInstanceIdPath();
-    if (existsSync(file)) {
-      const raw = readFileSync(file, 'utf8');
+    if (await pathExists(file)) {
+      const raw = await fs.readFile(file, 'utf8');
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.instanceId === 'string' && parsed.instanceId.length > 0) {
         const enabledOverride =
@@ -168,7 +176,7 @@ function loadOrCreateState(): {
   }
   const newId = cryptoRandomId();
   try {
-    writeFileSync(getInstanceIdPath(), JSON.stringify({ instanceId: newId }, null, 2), 'utf8');
+    await fs.writeFile(getInstanceIdPath(), JSON.stringify({ instanceId: newId }, null, 2), 'utf8');
   } catch {
     // ignore
   }
@@ -346,6 +354,7 @@ async function posthogIdentify(username: string): Promise<void> {
 }
 
 export async function init(options?: InitOptions) {
+  appConfig = await loadAppConfig();
   const env = process.env;
   const enabledEnv = (env.TELEMETRY_ENABLED ?? 'true').toString().toLowerCase();
   enabled = enabledEnv !== 'false' && enabledEnv !== '0' && enabledEnv !== 'no';
@@ -356,7 +365,7 @@ export async function init(options?: InitOptions) {
   );
   installSource = options?.installSource || env.INSTALL_SOURCE || undefined;
 
-  const state = loadOrCreateState();
+  const state = await loadOrCreateState();
   instanceId = state.instanceId;
   sessionStartMs = Date.now();
   // If enabledOverride is explicitly false, user opted out; otherwise leave undefined
@@ -442,15 +451,15 @@ export function getTelemetryStatus() {
   };
 }
 
-export function setTelemetryEnabledViaUser(enabledFlag: boolean) {
+export async function setTelemetryEnabledViaUser(enabledFlag: boolean) {
   userOptOut = !enabledFlag;
   // Persist alongside instanceId
   try {
     const file = getInstanceIdPath();
     let state: any = {};
-    if (existsSync(file)) {
+    if (await pathExists(file)) {
       try {
-        state = JSON.parse(readFileSync(file, 'utf8')) || {};
+        state = JSON.parse(await fs.readFile(file, 'utf8')) || {};
       } catch {
         state = {};
       }
@@ -458,21 +467,21 @@ export function setTelemetryEnabledViaUser(enabledFlag: boolean) {
     state.instanceId = instanceId || state.instanceId || cryptoRandomId();
     state.enabled = enabledFlag; // store explicit preference
     state.updatedAt = new Date().toISOString();
-    writeFileSync(file, JSON.stringify(state, null, 2), 'utf8');
+    await fs.writeFile(file, JSON.stringify(state, null, 2), 'utf8');
   } catch {
     // ignore
   }
 }
 
-function persistState(state: {
+async function persistState(state: {
   instanceId: string;
   enabledOverride?: boolean;
   onboardingSeen?: boolean;
   lastActiveDate?: string;
 }) {
   try {
-    const existing = existsSync(getInstanceIdPath())
-      ? JSON.parse(readFileSync(getInstanceIdPath(), 'utf8'))
+    const existing = (await pathExists(getInstanceIdPath()))
+      ? JSON.parse(await fs.readFile(getInstanceIdPath(), 'utf8'))
       : {};
     const merged = {
       ...existing,
@@ -486,7 +495,7 @@ function persistState(state: {
       createdAt: existing.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    writeFileSync(getInstanceIdPath(), JSON.stringify(merged, null, 2), 'utf8');
+    await fs.writeFile(getInstanceIdPath(), JSON.stringify(merged, null, 2), 'utf8');
   } catch {
     // ignore
   }
@@ -528,7 +537,7 @@ async function checkDailyActiveUser(): Promise<void> {
       lastActiveDate = today;
 
       // Persist the new date to storage
-      persistState({
+      await persistState({
         instanceId: instanceId || cryptoRandomId(),
         enabledOverride: userOptOut === undefined ? undefined : !userOptOut,
         onboardingSeen,
@@ -548,10 +557,10 @@ export async function checkAndReportDailyActiveUser(): Promise<void> {
   return checkDailyActiveUser();
 }
 
-export function setOnboardingSeen(flag: boolean) {
+export async function setOnboardingSeen(flag: boolean) {
   onboardingSeen = Boolean(flag);
   try {
-    persistState({
+    await persistState({
       instanceId: instanceId || cryptoRandomId(),
       onboardingSeen,
       enabledOverride: userOptOut === undefined ? undefined : !userOptOut,
