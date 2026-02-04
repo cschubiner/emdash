@@ -26,8 +26,7 @@ const LOGIN_SHELL_PATH_TIMEOUT_MS = 2500;
 const refreshPathFromLoginShell = () => {
   if (process.platform !== 'darwin' && process.platform !== 'linux') return;
 
-  const shell =
-    process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
+  const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
   execFile(
     shell,
     ['-lc', 'printf "%s" "$PATH"'],
@@ -60,7 +59,6 @@ if (process.platform === 'darwin') {
     if (!parts.includes(p)) parts.unshift(p);
   }
   process.env.PATH = parts.join(':');
-
 }
 
 if (process.platform === 'linux') {
@@ -80,7 +78,6 @@ if (process.platform === 'linux') {
       if (!parts.includes(p)) parts.unshift(p);
     }
     process.env.PATH = parts.join(':');
-
   } catch {}
 }
 
