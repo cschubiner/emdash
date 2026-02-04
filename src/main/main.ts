@@ -34,7 +34,7 @@ const refreshPathFromLoginShell = () => {
     { timeout: LOGIN_SHELL_PATH_TIMEOUT_MS, killSignal: 'SIGKILL' },
     (error, stdout) => {
       if (error) {
-        const err = error as NodeJS.ErrnoException;
+        const err = error as NodeJS.ErrnoException & { killed?: boolean };
         if (err.code === 'ETIMEDOUT' || err.killed) {
           console.warn('Login shell PATH lookup timed out');
         } else {
