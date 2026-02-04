@@ -18,15 +18,18 @@ export interface TaskChangesOptions {
 
 export function useTaskChanges(taskPath: string, taskId: string, options?: TaskChangesOptions) {
   const snapshot = useGitStatus(taskPath, {
-    active: options?.active,
+    isActive: options?.active,
     pollIntervalMs: options?.pollIntervalMs,
   });
+
+  const totalAdditions = snapshot.changes.reduce((sum, change) => sum + change.additions, 0);
+  const totalDeletions = snapshot.changes.reduce((sum, change) => sum + change.deletions, 0);
 
   return {
     taskId,
     changes: snapshot.changes,
-    totalAdditions: snapshot.totalAdditions,
-    totalDeletions: snapshot.totalDeletions,
+    totalAdditions,
+    totalDeletions,
     isLoading: snapshot.isLoading,
     error: snapshot.error,
   };

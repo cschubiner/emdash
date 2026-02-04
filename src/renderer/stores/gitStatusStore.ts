@@ -339,7 +339,7 @@ export const gitStatusStore = {
 export const useGitStatus = (workspacePath: string, options?: GitStatusSubscribeOptions) => {
   const subscribe = useCallback(
     (listener: () => void) => {
-      const subscription = subscribeToGitStatus(workspacePath, listener, options);
+      const subscription = subscribeToGitStatus(workspacePath, () => listener(), options);
       return () => subscription.unsubscribe();
     },
     [workspacePath, options?.isActive, options?.pollIntervalMs]
