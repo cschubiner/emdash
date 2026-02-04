@@ -19,13 +19,15 @@ class LifecycleScriptsService {
   /**
    * Read .emdash.json config from project root
    */
-  readConfig(projectPath: string): EmdashConfig | null {
+  async readConfig(projectPath: string): Promise<EmdashConfig | null> {
     try {
       const configPath = path.join(projectPath, '.emdash.json');
-      if (!fs.existsSync(configPath)) {
+      try {
+        await fs.promises.access(configPath);
+      } catch {
         return null;
       }
-      const content = fs.readFileSync(configPath, 'utf8');
+      const content = await fs.promises.readFile(configPath, 'utf8');
       return JSON.parse(content) as EmdashConfig;
     } catch (error) {
       log.warn('Failed to read .emdash.json', { projectPath, error });
@@ -36,8 +38,8 @@ class LifecycleScriptsService {
   /**
    * Get the setup script command if configured
    */
-  getSetupScript(projectPath: string): string | null {
-    const config = this.readConfig(projectPath);
+  async getSetupScript(projectPath: string): Promise<string | null> {
+    const config = await this.readConfig(projectPath);
     return config?.scripts?.setup || null;
   }
 }

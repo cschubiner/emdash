@@ -248,47 +248,9 @@ export async function startPty(options: {
   };
   // On Windows, resolve shell command to full path for node-pty
   if (process.platform === 'win32' && shell && !shell.includes('\\') && !shell.includes('/')) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { execSync } = require('child_process');
-
-      // Try .cmd first (npm globals are typically .cmd files)
-      let resolved = '';
-      try {
-        resolved = execSync(`where ${shell}.cmd`, { encoding: 'utf8' })
-          .trim()
-          .split('\n')[0]
-          .replace(/\r/g, '')
-          .trim();
-      } catch {
-        // If .cmd doesn't exist, try without extension
-        resolved = execSync(`where ${shell}`, { encoding: 'utf8' })
-          .trim()
-          .split('\n')[0]
-          .replace(/\r/g, '')
-          .trim();
-      }
-
-      // Ensure we have an executable extension
-      if (resolved && !resolved.match(/\.(exe|cmd|bat)$/i)) {
-        // If no executable extension, try appending .cmd
-        const cmdPath = resolved + '.cmd';
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const fs = require('fs');
-          if (fs.existsSync(cmdPath)) {
-            resolved = cmdPath;
-          }
-        } catch {
-          // Ignore fs errors
-        }
-      }
-
-      if (resolved) {
-        useShell = resolved;
-      }
-    } catch {
-      // Fall back to original shell name
+    const resolved = await resolveWindowsShell(shell);
+    if (resolved) {
+      useShell = resolved;
     }
   }
 
@@ -414,6 +376,53 @@ export async function startPty(options: {
 
   ptys.set(id, { id, proc });
   return proc;
+}
+
+async function resolveWindowsShell(shell: string): Promise<string | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { execFile } = require('child_process');
+    const execWhere = (cmd: string) =>
+      new Promise<string>((resolve, reject) => {
+        execFile(
+          'where',
+          [cmd],
+          { encoding: 'utf8' },
+          (error: NodeJS.ErrnoException | null, stdout: string) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve(stdout || '');
+          }
+        );
+      });
+
+    // Try .cmd first (npm globals are typically .cmd files)
+    let resolved = '';
+    try {
+      resolved = (await execWhere(`${shell}.cmd`)).trim().split('\n')[0].replace(/\r/g, '').trim();
+    } catch {
+      // If .cmd doesn't exist, try without extension
+      resolved = (await execWhere(shell)).trim().split('\n')[0].replace(/\r/g, '').trim();
+    }
+
+    // Ensure we have an executable extension
+    if (resolved && !resolved.match(/\.(exe|cmd|bat)$/i)) {
+      // If no executable extension, try appending .cmd
+      const cmdPath = resolved + '.cmd';
+      try {
+        await fs.promises.access(cmdPath);
+        resolved = cmdPath;
+      } catch {
+        // Ignore fs errors
+      }
+    }
+
+    return resolved || null;
+  } catch {
+    return null;
+  }
 }
 
 export function writePty(id: string, data: string): void {

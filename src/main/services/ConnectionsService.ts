@@ -1,4 +1,4 @@
-import { spawn, execFileSync } from 'child_process';
+import { spawn, execFile } from 'child_process';
 import { BrowserWindow } from 'electron';
 import { providerStatusCache, type ProviderStatus } from './providerStatusCache';
 import { listDetectableProviders, type ProviderDefinition } from '@shared/providers/registry';
@@ -229,7 +229,7 @@ class ConnectionsService {
     args: string[],
     timeoutMs: number
   ): Promise<CommandResult> {
-    const resolvedPath = this.resolveCommandPath(command);
+    const resolvedPath = await this.resolveCommandPath(command);
     return new Promise((resolve) => {
       try {
         const child = spawn(command, args);
@@ -310,18 +310,21 @@ class ConnectionsService {
     return matches ? matches[0] : null;
   }
 
-  private resolveCommandPath(command: string): string | null {
+  private resolveCommandPath(command: string): Promise<string | null> {
     const resolver = process.platform === 'win32' ? 'where' : 'which';
-    try {
-      const result = execFileSync(resolver, [command], { encoding: 'utf8' });
-      const lines = result
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-      return lines[0] ?? null;
-    } catch {
-      return null;
-    }
+    return new Promise((resolve) => {
+      execFile(resolver, [command], { encoding: 'utf8' }, (error, stdout) => {
+        if (error || !stdout) {
+          resolve(null);
+          return;
+        }
+        const lines = stdout
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        resolve(lines[0] ?? null);
+      });
+    });
   }
 
   private cacheStatus(providerId: string, result: CommandResult, statusCode: CliStatusCode) {

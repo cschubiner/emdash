@@ -1002,14 +1002,16 @@ export class GitHubService {
 
     try {
       // Ensure the directory exists (clone should have created it, but just in case)
-      if (!fs.existsSync(localPath)) {
+      try {
+        await fs.promises.access(localPath);
+      } catch {
         throw new Error('Local path does not exist after clone');
       }
 
       // Create README.md
       const readmePath = path.join(localPath, 'README.md');
       const readmeContent = description ? `# ${name}\n\n${description}\n` : `# ${name}\n`;
-      fs.writeFileSync(readmePath, readmeContent, 'utf8');
+      await fs.promises.writeFile(readmePath, readmeContent, 'utf8');
 
       // Initialize git, add files, commit, and push
       const execOptions = { cwd: localPath };
@@ -1044,9 +1046,7 @@ export class GitHubService {
     try {
       // Ensure the local path directory exists
       const dir = path.dirname(localPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+      await fs.promises.mkdir(dir, { recursive: true });
 
       // Clone the repository
       await execAsync(`git clone "${repoUrl}" "${localPath}"`);

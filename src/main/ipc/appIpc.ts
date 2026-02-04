@@ -1,6 +1,6 @@
 import { app, ipcMain, shell } from 'electron';
 import { exec } from 'child_process';
-import { readFileSync } from 'fs';
+import { promises as fs } from 'fs';
 import { join } from 'path';
 import { ensureProjectPrepared } from '../services/ProjectPrep';
 import { getAppSettings } from '../settings';
@@ -83,7 +83,7 @@ export function registerAppIpc() {
 
         if (appConfig.autoInstall) {
           try {
-            const settings = getAppSettings();
+            const settings = await getAppSettings();
             if (settings?.projectPrep?.autoInstallOnOpenInEditor) {
               void ensureProjectPrepared(target).catch(() => {});
             }
@@ -194,7 +194,7 @@ export function registerAppIpc() {
   });
 
   // App metadata
-  ipcMain.handle('app:getAppVersion', () => {
+  ipcMain.handle('app:getAppVersion', async () => {
     try {
       // In development, we need to look for package.json in the project root
       const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
@@ -212,7 +212,7 @@ export function registerAppIpc() {
 
       for (const packageJsonPath of possiblePaths) {
         try {
-          const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+          const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
           if (packageJson.name === 'emdash' && packageJson.version) {
             return packageJson.version;
           }

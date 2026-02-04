@@ -195,9 +195,10 @@ export async function revertFile(
   } catch {
     // File doesn't exist in HEAD (it's a new/untracked file), delete it
     const absPath = path.join(taskPath, filePath);
-    if (fs.existsSync(absPath)) {
-      fs.unlinkSync(absPath);
-    }
+    try {
+      await fs.promises.access(absPath);
+      await fs.promises.unlink(absPath);
+    } catch {}
     return { action: 'reverted' };
   }
 
@@ -249,10 +250,11 @@ export async function getFileDiff(
     if (result.length === 0) {
       try {
         const abs = path.join(taskPath, filePath);
-        if (fs.existsSync(abs)) {
-          const content = fs.readFileSync(abs, 'utf8');
+        try {
+          await fs.promises.access(abs);
+          const content = await fs.promises.readFile(abs, 'utf8');
           return { lines: content.split('\n').map((l) => ({ right: l, type: 'add' as const })) };
-        } else {
+        } catch {
           const { stdout: prev } = await execFileAsync('git', ['show', `HEAD:${filePath}`], {
             cwd: taskPath,
           });
@@ -267,50 +269,51 @@ export async function getFileDiff(
   } catch {
     try {
       const abs = path.join(taskPath, filePath);
-      const content = fs.readFileSync(abs, 'utf8');
+      const content = await fs.promises.readFile(abs, 'utf8');
       const lines = content.split('\n');
       return { lines: lines.map((l) => ({ right: l, type: 'add' as const })) };
     } catch {
-      try {
-        const { stdout } = await execFileAsync(
-          'git',
-          ['diff', '--no-color', '--unified=2000', 'HEAD', '--', filePath],
-          { cwd: taskPath }
-        );
-        const linesRaw = stdout.split('\n');
-        const result: Array<{ left?: string; right?: string; type: 'context' | 'add' | 'del' }> =
-          [];
-        for (const line of linesRaw) {
-          if (!line) continue;
-          if (
-            line.startsWith('diff ') ||
-            line.startsWith('index ') ||
-            line.startsWith('--- ') ||
-            line.startsWith('+++ ') ||
-            line.startsWith('@@')
-          )
-            continue;
-          const prefix = line[0];
-          const content = line.slice(1);
-          if (prefix === ' ') result.push({ left: content, right: content, type: 'context' });
-          else if (prefix === '-') result.push({ left: content, type: 'del' });
-          else if (prefix === '+') result.push({ right: content, type: 'add' });
-          else result.push({ left: line, right: line, type: 'context' });
-        }
-        if (result.length === 0) {
-          try {
-            const { stdout: prev } = await execFileAsync('git', ['show', `HEAD:${filePath}`], {
-              cwd: taskPath,
-            });
-            return { lines: prev.split('\n').map((l) => ({ left: l, type: 'del' as const })) };
-          } catch {
-            return { lines: [] };
-          }
-        }
-        return { lines: result };
-      } catch {
-        return { lines: [] };
+      // fall through to git diff fallback below
+    }
+
+    try {
+      const { stdout } = await execFileAsync(
+        'git',
+        ['diff', '--no-color', '--unified=2000', 'HEAD', '--', filePath],
+        { cwd: taskPath }
+      );
+      const linesRaw = stdout.split('\n');
+      const result: Array<{ left?: string; right?: string; type: 'context' | 'add' | 'del' }> = [];
+      for (const line of linesRaw) {
+        if (!line) continue;
+        if (
+          line.startsWith('diff ') ||
+          line.startsWith('index ') ||
+          line.startsWith('--- ') ||
+          line.startsWith('+++ ') ||
+          line.startsWith('@@')
+        )
+          continue;
+        const prefix = line[0];
+        const content = line.slice(1);
+        if (prefix === ' ') result.push({ left: content, right: content, type: 'context' });
+        else if (prefix === '-') result.push({ left: content, type: 'del' });
+        else if (prefix === '+') result.push({ right: content, type: 'add' });
+        else result.push({ left: line, right: line, type: 'context' });
       }
+      if (result.length === 0) {
+        try {
+          const { stdout: prev } = await execFileAsync('git', ['show', `HEAD:${filePath}`], {
+            cwd: taskPath,
+          });
+          return { lines: prev.split('\n').map((l) => ({ left: l, type: 'del' as const })) };
+        } catch {
+          return { lines: [] };
+        }
+      }
+      return { lines: result };
+    } catch {
+      return { lines: [] };
     }
   }
 }

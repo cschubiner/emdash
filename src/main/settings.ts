@@ -1,5 +1,5 @@
 import { app } from 'electron';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { promises as fs } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
 import type { ProviderId } from '@shared/providers/registry';
@@ -7,6 +7,15 @@ import { isValidProviderId } from '@shared/providers/registry';
 import { normalizeAgentRuns } from '@shared/agentRuns';
 
 const DEFAULT_PROVIDER_ID: ProviderId = 'claude';
+
+const pathExists = async (p: string): Promise<boolean> => {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 export interface RepositorySettings {
   branchPrefix: string; // e.g., 'emdash'
@@ -145,12 +154,12 @@ let cached: AppSettings | null = null;
 /**
  * Load application settings from disk with sane defaults.
  */
-export function getAppSettings(): AppSettings {
+export async function getAppSettings(): Promise<AppSettings> {
   try {
     if (cached) return cached;
     const file = getSettingsPath();
-    if (existsSync(file)) {
-      const raw = readFileSync(file, 'utf8');
+    if (await pathExists(file)) {
+      const raw = await fs.readFile(file, 'utf8');
       const parsed = JSON.parse(raw);
       cached = normalizeSettings(deepMerge(DEFAULT_SETTINGS, parsed));
       return cached;
@@ -165,21 +174,21 @@ export function getAppSettings(): AppSettings {
 /**
  * Update settings and persist to disk. Partial updates are deeply merged.
  */
-export function updateAppSettings(partial: Partial<AppSettings>): AppSettings {
-  const current = getAppSettings();
+export async function updateAppSettings(partial: Partial<AppSettings>): Promise<AppSettings> {
+  const current = await getAppSettings();
   const merged = deepMerge(current, partial);
   const next = normalizeSettings(merged);
-  persistSettings(next);
+  await persistSettings(next);
   cached = next;
   return next;
 }
 
-export function persistSettings(settings: AppSettings) {
+export async function persistSettings(settings: AppSettings) {
   try {
     const file = getSettingsPath();
     const dir = dirname(file);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(file, JSON.stringify(settings, null, 2), 'utf8');
+    if (!(await pathExists(dir))) await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(file, JSON.stringify(settings, null, 2), 'utf8');
   } catch {}
 }
 
