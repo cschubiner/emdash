@@ -55,6 +55,13 @@ const ALLOWED_IMAGE_EXTENSIONS = new Set<string>([
 ]);
 const DEFAULT_ATTACHMENTS_SUBDIR = 'attachments' as const;
 
+async function safeStat(p: string): Promise<fs.Stats | null> {
+  try {
+    return await fs.promises.stat(p);
+  } catch {
+    return null;
+  }
+}
 export function registerFsIpc(): void {
   function emitPlanEvent(payload: any) {
     try {
@@ -174,7 +181,7 @@ export function registerFsIpc(): void {
         const normRoot = path.resolve(root) + path.sep;
         if (!abs.startsWith(normRoot)) return { success: false, error: 'Path escapes root' };
 
-        const st = safeStat(abs);
+        const st = await safeStat(abs);
         if (!st) return { success: false, error: 'Not found' };
         if (st.isDirectory()) return { success: false, error: 'Is a directory' };
 
@@ -212,7 +219,7 @@ export function registerFsIpc(): void {
       const normRoot = path.resolve(root) + path.sep;
       if (!abs.startsWith(normRoot)) return { success: false, error: 'Path escapes root' };
 
-      const st = safeStat(abs);
+      const st = await safeStat(abs);
       if (!st) return { success: false, error: 'Not found' };
       if (st.isDirectory()) return { success: false, error: 'Is a directory' };
 
@@ -624,7 +631,7 @@ export function registerFsIpc(): void {
       const normRoot = path.resolve(root) + path.sep;
       if (!abs.startsWith(normRoot)) return { success: false, error: 'Path escapes root' };
       if (!fs.existsSync(abs)) return { success: true };
-      const st = safeStat(abs);
+      const st = await safeStat(abs);
       if (st && st.isDirectory()) return { success: false, error: 'Is a directory' };
       try {
         fs.unlinkSync(abs);
@@ -632,11 +639,11 @@ export function registerFsIpc(): void {
         // Try to relax permissions and retry (useful after a plan lock)
         try {
           const dir = path.dirname(abs);
-          const dst = safeStat(dir);
+          const dst = await safeStat(dir);
           if (dst) fs.chmodSync(dir, (dst.mode & 0o7777) | 0o222);
         } catch {}
         try {
-          const fst = safeStat(abs);
+          const fst = await safeStat(abs);
           if (fst) fs.chmodSync(abs, (fst.mode & 0o7777) | 0o222);
         } catch {}
         try {
