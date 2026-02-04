@@ -52,10 +52,9 @@ async function resolveDefaultBranch(repoPath: string): Promise<string> {
   } catch {}
 
   try {
-    const { stdout } = await execAsync(
-      'git remote show origin | sed -n "/HEAD branch/s/.*: //p"',
-      { cwd: repoPath }
-    );
+    const { stdout } = await execAsync('git remote show origin | sed -n "/HEAD branch/s/.*: //p"', {
+      cwd: repoPath,
+    });
     const db2 = (stdout || '').trim();
     if (db2) return db2;
   } catch {}
