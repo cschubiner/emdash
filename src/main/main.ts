@@ -8,6 +8,7 @@ try {
   // dotenv is optional - no error if .env doesn't exist
 }
 
+import { execFile } from 'child_process';
 import { app } from 'electron';
 // Ensure PATH matches the user's shell when launched from Finder (macOS)
 // so Homebrew/NPM global binaries like `gh` and `codex` are found.
@@ -20,6 +21,37 @@ try {
   // no-op if fix-path isn't available at runtime
 }
 
+const LOGIN_SHELL_PATH_TIMEOUT_MS = 2500;
+
+const refreshPathFromLoginShell = () => {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
+
+  const shell =
+    process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
+  execFile(
+    shell,
+    ['-lc', 'printf "%s" "$PATH"'],
+    { timeout: LOGIN_SHELL_PATH_TIMEOUT_MS, killSignal: 'SIGKILL' },
+    (error, stdout) => {
+      if (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'ETIMEDOUT' || err.killed) {
+          console.warn('Login shell PATH lookup timed out');
+        } else {
+          console.warn('Login shell PATH lookup failed:', err.message || err);
+        }
+        return;
+      }
+      const loginPath = stdout.trim();
+      if (!loginPath) return;
+      const merged = new Set(
+        (loginPath + ':' + (process.env.PATH || '')).split(':').filter(Boolean)
+      );
+      process.env.PATH = Array.from(merged).join(':');
+    }
+  );
+};
+
 if (process.platform === 'darwin') {
   const extras = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/homebrew/sbin', '/usr/local/sbin'];
   const cur = process.env.PATH || '';
@@ -29,16 +61,6 @@ if (process.platform === 'darwin') {
   }
   process.env.PATH = parts.join(':');
 
-  // As a last resort, ask the user's login shell for PATH and merge it in.
-  try {
-    const { execSync } = require('child_process');
-    const shell = process.env.SHELL || '/bin/zsh';
-    const loginPath = execSync(`${shell} -ilc 'echo -n $PATH'`, { encoding: 'utf8' });
-    if (loginPath) {
-      const merged = new Set((loginPath + ':' + process.env.PATH).split(':').filter(Boolean));
-      process.env.PATH = Array.from(merged).join(':');
-    }
-  } catch {}
 }
 
 if (process.platform === 'linux') {
@@ -59,17 +81,6 @@ if (process.platform === 'linux') {
     }
     process.env.PATH = parts.join(':');
 
-    try {
-      const { execSync } = require('child_process');
-      const shell = process.env.SHELL || '/bin/bash';
-      const loginPath = execSync(`${shell} -ilc 'echo -n $PATH'`, {
-        encoding: 'utf8',
-      });
-      if (loginPath) {
-        const merged = new Set((loginPath + ':' + process.env.PATH).split(':').filter(Boolean));
-        process.env.PATH = Array.from(merged).join(':');
-      }
-    } catch {}
   } catch {}
 }
 
@@ -212,6 +223,9 @@ app.whenReady().then(async () => {
 
   // Create main window
   createMainWindow();
+
+  // Async PATH refresh to avoid blocking startup/UI.
+  setImmediate(refreshPathFromLoginShell);
 
   // Initialize auto-update service after window is created
   try {
