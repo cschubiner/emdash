@@ -50,23 +50,28 @@ const ALLOWED_IMAGE_EXTENSIONS = new Set<string>([
 ]);
 const DEFAULT_ATTACHMENTS_SUBDIR = 'attachments' as const;
 
-function safeStat(p: string): fs.Stats | null {
+async function safeStat(p: string): Promise<fs.Stats | null> {
   try {
-    return fs.statSync(p);
+    return await fs.promises.stat(p);
   } catch {
     return null;
   }
 }
 
-function listFiles(root: string, includeDirs: boolean, maxEntries: number): Item[] {
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function listFiles(root: string, includeDirs: boolean, maxEntries: number): Promise<Item[]> {
   const items: Item[] = [];
   const stack: string[] = ['.'];
+  let steps = 0;
 
-  while (stack.length > 0) {
+  while (stack.length > 0 && items.length < maxEntries) {
     const rel = stack.pop() as string;
     const abs = path.join(root, rel);
 
-    const stat = safeStat(abs);
+    const stat = await safeStat(abs);
     if (!stat) continue;
 
     if (stat.isDirectory()) {
@@ -80,7 +85,7 @@ function listFiles(root: string, includeDirs: boolean, maxEntries: number): Item
 
       let entries: string[] = [];
       try {
-        entries = fs.readdirSync(abs);
+        entries = await fs.promises.readdir(abs);
       } catch {
         continue;
       }
@@ -94,6 +99,11 @@ function listFiles(root: string, includeDirs: boolean, maxEntries: number): Item
     } else if (stat.isFile()) {
       items.push({ path: rel, type: 'file' });
       if (items.length >= maxEntries) break;
+    }
+
+    steps += 1;
+    if (steps % 50 === 0) {
+      await yieldToEventLoop();
     }
   }
 
@@ -119,7 +129,7 @@ export function registerFsIpc(): void {
       if (!root || !fs.existsSync(root)) {
         return { success: false, error: 'Invalid root path' };
       }
-      const items = listFiles(root, includeDirs, maxEntries);
+      const items = await listFiles(root, includeDirs, maxEntries);
       return { success: true, items };
     } catch (error) {
       console.error('fs:list failed:', error);
@@ -141,7 +151,7 @@ export function registerFsIpc(): void {
         const normRoot = path.resolve(root) + path.sep;
         if (!abs.startsWith(normRoot)) return { success: false, error: 'Path escapes root' };
 
-        const st = safeStat(abs);
+        const st = await safeStat(abs);
         if (!st) return { success: false, error: 'Not found' };
         if (st.isDirectory()) return { success: false, error: 'Is a directory' };
 
@@ -179,7 +189,7 @@ export function registerFsIpc(): void {
       const normRoot = path.resolve(root) + path.sep;
       if (!abs.startsWith(normRoot)) return { success: false, error: 'Path escapes root' };
 
-      const st = safeStat(abs);
+      const st = await safeStat(abs);
       if (!st) return { success: false, error: 'Not found' };
       if (st.isDirectory()) return { success: false, error: 'Is a directory' };
 
@@ -591,7 +601,7 @@ export function registerFsIpc(): void {
       const normRoot = path.resolve(root) + path.sep;
       if (!abs.startsWith(normRoot)) return { success: false, error: 'Path escapes root' };
       if (!fs.existsSync(abs)) return { success: true };
-      const st = safeStat(abs);
+      const st = await safeStat(abs);
       if (st && st.isDirectory()) return { success: false, error: 'Is a directory' };
       try {
         fs.unlinkSync(abs);
@@ -599,11 +609,11 @@ export function registerFsIpc(): void {
         // Try to relax permissions and retry (useful after a plan lock)
         try {
           const dir = path.dirname(abs);
-          const dst = safeStat(dir);
+          const dst = await safeStat(dir);
           if (dst) fs.chmodSync(dir, (dst.mode & 0o7777) | 0o222);
         } catch {}
         try {
-          const fst = safeStat(abs);
+          const fst = await safeStat(abs);
           if (fst) fs.chmodSync(abs, (fst.mode & 0o7777) | 0o222);
         } catch {}
         try {
