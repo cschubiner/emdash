@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { terminalSessionRegistry } from '../terminal/SessionRegistry';
 
 type TaskTerminal = {
@@ -337,10 +337,26 @@ export function useTaskTerminals(
 ) {
   const resolvedId = taskId || 'global';
   const resolvedPath = taskPath || opts?.defaultCwd;
+  const snapshotRef = useRef<TaskSnapshot | null>(null);
+  const snapshotKeyRef = useRef<string>('');
+  const snapshotKey = `${resolvedId}::${resolvedPath ?? ''}`;
+  const getSnapshotStable = useCallback(() => {
+    if (snapshotKeyRef.current !== snapshotKey) {
+      snapshotKeyRef.current = snapshotKey;
+      snapshotRef.current = null;
+    }
+    const next = getSnapshot(resolvedId, resolvedPath);
+    const prev = snapshotRef.current;
+    if (prev && isSameSnapshot(prev, next)) {
+      return prev;
+    }
+    snapshotRef.current = next;
+    return next;
+  }, [resolvedId, resolvedPath, snapshotKey]);
   const snapshot = useSyncExternalStore(
     (listener) => subscribe(resolvedId, resolvedPath, listener),
-    () => getSnapshot(resolvedId, resolvedPath),
-    () => getSnapshot(resolvedId, resolvedPath)
+    getSnapshotStable,
+    getSnapshotStable
   );
 
   const actions = useMemo(() => {
@@ -361,6 +377,31 @@ export function useTaskTerminals(
     activeTerminal,
     ...actions,
   };
+}
+
+function isSameSnapshot(a: TaskSnapshot, b: TaskSnapshot): boolean {
+  if (a === b) return true;
+  if (a.activeTerminalId !== b.activeTerminalId) return false;
+  return areTerminalsEqual(a.terminals, b.terminals);
+}
+
+function areTerminalsEqual(a: TaskTerminal[], b: TaskTerminal[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (
+      left.id !== right.id ||
+      left.title !== right.title ||
+      left.cwd !== right.cwd ||
+      left.shell !== right.shell ||
+      left.createdAt !== right.createdAt
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export type { TaskTerminal };
