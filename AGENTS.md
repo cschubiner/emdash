@@ -30,6 +30,11 @@ optional_env:
 2. Run `npm run type-check`.
 3. Run `npx vitest run` (tests live under `src/**/*.test.ts`).
 
+**Before Every Commit**
+1. Run `npm run lint`.
+2. Run `npm run format`.
+3. Run `npm run build`.
+
 **Build & Package**
 1. `npm run build` to compile the Electron main and Vite renderer.
 2. Platform-specific installers: `npm run package:mac|linux|win` (artifacts in `release/`).
