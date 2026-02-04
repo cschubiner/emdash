@@ -130,9 +130,7 @@ export class WorktreePoolService {
 
     // Ensure worktrees directory exists
     const worktreesDir = path.dirname(reservePath);
-    if (!fs.existsSync(worktreesDir)) {
-      fs.mkdirSync(worktreesDir, { recursive: true });
-    }
+    await fs.promises.mkdir(worktreesDir, { recursive: true });
 
     // Resolve base ref (default to HEAD if not specified)
     const useBaseRef = baseRef || 'HEAD';
@@ -211,7 +209,7 @@ export class WorktreePoolService {
     requestedBaseRef?: string
   ): Promise<ClaimResult> {
     const { getAppSettings } = await import('../settings');
-    const settings = getAppSettings();
+    const settings = await getAppSettings();
     const prefix = settings?.repository?.branchPrefix || 'emdash';
 
     // Generate new names
@@ -375,9 +373,8 @@ export class WorktreePoolService {
     // Collect all orphaned reserves first (fast sync scan)
     const orphanedReserves: { path: string; name: string }[] = [];
     for (const worktreesDir of possibleWorktreeDirs) {
-      if (!fs.existsSync(worktreesDir)) continue;
       try {
-        const entries = fs.readdirSync(worktreesDir, { withFileTypes: true });
+        const entries = await fs.promises.readdir(worktreesDir, { withFileTypes: true });
         for (const entry of entries) {
           if (entry.isDirectory() && entry.name.startsWith(this.RESERVE_PREFIX)) {
             orphanedReserves.push({
@@ -387,7 +384,7 @@ export class WorktreePoolService {
           }
         }
       } catch {
-        // Ignore unreadable directories
+        // Ignore missing/unreadable directories
       }
     }
 
@@ -406,15 +403,28 @@ export class WorktreePoolService {
     try {
       // Try to find the parent git repo to properly remove the worktree
       const gitDirPath = path.join(reservePath, '.git');
-      if (fs.existsSync(gitDirPath)) {
-        const gitDirContent = fs.readFileSync(gitDirPath, 'utf8');
+      let gitDirContent: string | null = null;
+      try {
+        gitDirContent = await fs.promises.readFile(gitDirPath, 'utf8');
+      } catch {
+        gitDirContent = null;
+      }
+      if (gitDirContent) {
         const match = gitDirContent.match(/gitdir:\s*(.+)/);
         if (match) {
           // Extract the main repo path from the gitdir reference
           const gitWorktreePath = match[1].trim();
           const mainGitDir = gitWorktreePath.replace(/\/\.git\/worktrees\/.*$/, '');
 
-          if (fs.existsSync(mainGitDir)) {
+          let mainGitDirExists = false;
+          try {
+            const st = await fs.promises.stat(mainGitDir);
+            mainGitDirExists = st.isDirectory();
+          } catch {
+            mainGitDirExists = false;
+          }
+
+          if (mainGitDirExists) {
             // Remove worktree via git
             await execFileAsync('git', ['worktree', 'remove', '--force', reservePath], {
               cwd: mainGitDir,
@@ -437,7 +447,7 @@ export class WorktreePoolService {
       }
 
       // Fallback: just remove the directory
-      fs.rmSync(reservePath, { recursive: true, force: true });
+      await fs.promises.rm(reservePath, { recursive: true, force: true });
       return true;
     } catch {
       return false;
@@ -470,7 +480,7 @@ export class WorktreePoolService {
       if (pattern.includes('*')) {
         // Handle glob pattern - scan directory and match
         try {
-          const entries = fs.readdirSync(sourcePath, { withFileTypes: true });
+          const entries = await fs.promises.readdir(sourcePath, { withFileTypes: true });
           for (const entry of entries) {
             if (!entry.isFile()) continue;
             // Simple glob matching for patterns like .env.*.local
@@ -480,9 +490,11 @@ export class WorktreePoolService {
             if (regex.test(entry.name)) {
               const sourceFile = path.join(sourcePath, entry.name);
               const targetFile = path.join(targetPath, entry.name);
-              if (!fs.existsSync(targetFile)) {
+              try {
+                await fs.promises.access(targetFile);
+              } catch {
                 try {
-                  fs.copyFileSync(sourceFile, targetFile);
+                  await fs.promises.copyFile(sourceFile, targetFile);
                 } catch {}
               }
             }
@@ -492,11 +504,16 @@ export class WorktreePoolService {
         // Handle literal filename
         const sourceFile = path.join(sourcePath, pattern);
         const targetFile = path.join(targetPath, pattern);
-        if (fs.existsSync(sourceFile) && !fs.existsSync(targetFile)) {
+        try {
+          await fs.promises.access(sourceFile);
           try {
-            fs.copyFileSync(sourceFile, targetFile);
-          } catch {}
-        }
+            await fs.promises.access(targetFile);
+          } catch {
+            try {
+              await fs.promises.copyFile(sourceFile, targetFile);
+            } catch {}
+          }
+        } catch {}
       }
     }
   }

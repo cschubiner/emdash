@@ -1,11 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import { log } from '../lib/logger';
-import type { LifecyclePhase, LifecycleScriptConfig } from '@shared/lifecycle';
+
+export interface EmdashScripts {
+  setup?: string;
+}
 
 export interface EmdashConfig {
   preservePatterns?: string[];
-  scripts?: LifecycleScriptConfig;
+  scripts?: EmdashScripts;
 }
 
 /**
@@ -16,13 +19,15 @@ class LifecycleScriptsService {
   /**
    * Read .emdash.json config from project root
    */
-  readConfig(projectPath: string): EmdashConfig | null {
+  async readConfig(projectPath: string): Promise<EmdashConfig | null> {
     try {
       const configPath = path.join(projectPath, '.emdash.json');
-      if (!fs.existsSync(configPath)) {
+      try {
+        await fs.promises.access(configPath);
+      } catch {
         return null;
       }
-      const content = fs.readFileSync(configPath, 'utf8');
+      const content = await fs.promises.readFile(configPath, 'utf8');
       return JSON.parse(content) as EmdashConfig;
     } catch (error) {
       log.warn('Failed to read .emdash.json', { projectPath, error });
@@ -31,13 +36,11 @@ class LifecycleScriptsService {
   }
 
   /**
-   * Get a specific lifecycle script command if configured.
+   * Get the setup script command if configured
    */
-  getScript(projectPath: string, phase: LifecyclePhase): string | null {
-    const config = this.readConfig(projectPath);
-    const scripts = config?.scripts;
-    const script = scripts?.[phase];
-    return typeof script === 'string' && script.trim().length > 0 ? script.trim() : null;
+  async getSetupScript(projectPath: string): Promise<string | null> {
+    const config = await this.readConfig(projectPath);
+    return config?.scripts?.setup || null;
   }
 }
 

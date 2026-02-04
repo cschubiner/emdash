@@ -1,162 +1,12 @@
 import { app, ipcMain, shell } from 'electron';
 import { exec } from 'child_process';
-import { readFile } from 'fs/promises';
+import { promises as fs } from 'fs';
 import { join } from 'path';
 import { ensureProjectPrepared } from '../services/ProjectPrep';
 import { getAppSettings } from '../settings';
 import { getAppById, OPEN_IN_APPS, type OpenInAppId, type PlatformKey } from '@shared/openInApps';
 
-const UNKNOWN_VERSION = 'unknown';
-
-let cachedAppVersion: string | null = null;
-let cachedAppVersionPromise: Promise<string> | null = null;
-const FONT_CACHE_TTL_MS = 5 * 60 * 1000;
-let cachedInstalledFonts: { fonts: string[]; fetchedAt: number } | null = null;
-
-const execCommand = (
-  command: string,
-  opts?: { maxBuffer?: number; timeout?: number }
-): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    exec(
-      command,
-      { maxBuffer: opts?.maxBuffer ?? 8 * 1024 * 1024, timeout: opts?.timeout ?? 30000 },
-      (error, stdout) => {
-        if (error) return reject(error);
-        resolve(stdout ?? '');
-      }
-    );
-  });
-};
-
-const dedupeAndSortFonts = (fonts: string[]): string[] => {
-  const unique = Array.from(new Set(fonts.map((font) => font.trim()).filter(Boolean)));
-  return unique.sort((a, b) => a.localeCompare(b));
-};
-
-const listInstalledFontsMac = async (): Promise<string[]> => {
-  const stdout = await execCommand('system_profiler SPFontsDataType -json', {
-    maxBuffer: 24 * 1024 * 1024,
-    timeout: 60000,
-  });
-  const parsed = JSON.parse(stdout) as {
-    SPFontsDataType?: Array<{
-      typefaces?: Array<{ family?: string; fullname?: string }>;
-      _name?: string;
-    }>;
-  };
-  const fonts: string[] = [];
-  for (const item of parsed.SPFontsDataType ?? []) {
-    for (const typeface of item.typefaces ?? []) {
-      if (typeface.family) fonts.push(typeface.family);
-    }
-  }
-  return dedupeAndSortFonts(fonts);
-};
-
-const listInstalledFontsLinux = async (): Promise<string[]> => {
-  const stdout = await execCommand('fc-list : family', { timeout: 30000 });
-  const fonts = stdout
-    .split('\n')
-    .flatMap((line) => line.split(','))
-    .map((font) => font.trim())
-    .filter(Boolean);
-  return dedupeAndSortFonts(fonts);
-};
-
-const listInstalledFontsWindows = async (): Promise<string[]> => {
-  const script =
-    "$fonts = Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts';" +
-    "$props = $fonts.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' };" +
-    "$props | ForEach-Object { ($_.Name -replace '\\s*\\(.*\\)$','').Trim() }";
-  const stdout = await execCommand(`powershell -NoProfile -Command "${script}"`, {
-    timeout: 30000,
-  });
-  const fonts = stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return dedupeAndSortFonts(fonts);
-};
-
-const listInstalledFonts = async (): Promise<string[]> => {
-  switch (process.platform) {
-    case 'darwin':
-      return listInstalledFontsMac();
-    case 'linux':
-      return listInstalledFontsLinux();
-    case 'win32':
-      return listInstalledFontsWindows();
-    default:
-      return [];
-  }
-};
-
-const readPackageVersion = async (packageJsonPath: string): Promise<string | null> => {
-  try {
-    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf-8'));
-    if (packageJson.name === 'emdash' && packageJson.version) {
-      return packageJson.version;
-    }
-  } catch {
-    // Ignore missing or malformed package.json; try the next path.
-  }
-  return null;
-};
-
-const resolveAppVersion = async (): Promise<string> => {
-  // In development, we need to look for package.json in the project root.
-  const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
-
-  const possiblePaths = isDev
-    ? [
-        join(__dirname, '../../../../package.json'), // from dist/main/main/ipc in dev
-        join(__dirname, '../../../package.json'), // alternative dev path
-        join(process.cwd(), 'package.json'), // current working directory
-      ]
-    : [
-        join(__dirname, '../../package.json'), // from dist/main/ipc in production
-        join(app.getAppPath(), 'package.json'), // production build
-      ];
-
-  for (const packageJsonPath of possiblePaths) {
-    const version = await readPackageVersion(packageJsonPath);
-    if (version) {
-      return version;
-    }
-  }
-
-  // In dev, never use app.getVersion() as it returns Electron version.
-  if (isDev) {
-    return UNKNOWN_VERSION;
-  }
-
-  try {
-    return app.getVersion();
-  } catch (error) {
-    void error;
-    return UNKNOWN_VERSION;
-  }
-};
-
-const getCachedAppVersion = (): Promise<string> => {
-  if (cachedAppVersion) {
-    return Promise.resolve(cachedAppVersion);
-  }
-
-  if (!cachedAppVersionPromise) {
-    cachedAppVersionPromise = resolveAppVersion().then((version) => {
-      cachedAppVersion = version;
-      return version;
-    });
-  }
-
-  return cachedAppVersionPromise;
-};
-
 export function registerAppIpc() {
-  void getCachedAppVersion();
-
   ipcMain.handle('app:openExternal', async (_event, url: string) => {
     try {
       if (!url || typeof url !== 'string') throw new Error('Invalid URL');
@@ -233,7 +83,7 @@ export function registerAppIpc() {
 
         if (appConfig.autoInstall) {
           try {
-            const settings = getAppSettings();
+            const settings = await getAppSettings();
             if (settings?.projectPrep?.autoInstallOnOpenInEditor) {
               void ensureProjectPrepared(target).catch(() => {});
             }
@@ -343,33 +193,44 @@ export function registerAppIpc() {
     return availability;
   });
 
-  ipcMain.handle('app:listInstalledFonts', async (_event, args?: { refresh?: boolean }) => {
-    const refresh = Boolean(args?.refresh);
-    const now = Date.now();
-    if (
-      !refresh &&
-      cachedInstalledFonts &&
-      now - cachedInstalledFonts.fetchedAt < FONT_CACHE_TTL_MS
-    ) {
-      return { success: true, fonts: cachedInstalledFonts.fonts, cached: true };
-    }
-
+  // App metadata
+  ipcMain.handle('app:getAppVersion', async () => {
     try {
-      const fonts = await listInstalledFonts();
-      cachedInstalledFonts = { fonts, fetchedAt: now };
-      return { success: true, fonts, cached: false };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        fonts: cachedInstalledFonts?.fonts ?? [],
-        cached: Boolean(cachedInstalledFonts),
-      };
+      // In development, we need to look for package.json in the project root
+      const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
+
+      const possiblePaths = isDev
+        ? [
+            join(__dirname, '../../../../package.json'), // from dist/main/main/ipc in dev
+            join(__dirname, '../../../package.json'), // alternative dev path
+            join(process.cwd(), 'package.json'), // current working directory
+          ]
+        : [
+            join(__dirname, '../../package.json'), // from dist/main/ipc in production
+            join(app.getAppPath(), 'package.json'), // production build
+          ];
+
+      for (const packageJsonPath of possiblePaths) {
+        try {
+          const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
+          if (packageJson.name === 'emdash' && packageJson.version) {
+            return packageJson.version;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      // In dev, never use app.getVersion() as it returns Electron version
+      if (isDev) {
+        return '0.3.46';
+      }
+
+      return app.getVersion();
+    } catch {
+      return '0.3.46'; // Safe fallback
     }
   });
-
-  // App metadata
-  ipcMain.handle('app:getAppVersion', () => getCachedAppVersion());
   ipcMain.handle('app:getElectronVersion', () => process.versions.electron);
   ipcMain.handle('app:getPlatform', () => process.platform);
 }

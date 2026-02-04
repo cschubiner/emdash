@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'fs';
+import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { execSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { log } from '../lib/logger';
 
 export interface TerminalTheme {
@@ -35,52 +36,70 @@ export interface TerminalConfig {
   theme: TerminalTheme;
 }
 
+const execFileAsync = promisify(execFile);
+const pathExists = async (p: string): Promise<boolean> => {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+async function plutilToJson(plistPath: string): Promise<string> {
+  const { stdout } = await execFileAsync('plutil', ['-convert', 'json', '-o', '-', plistPath], {
+    encoding: 'utf8',
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  return stdout;
+}
+
 /**
  * Detect the user's preferred terminal emulator and extract its theme configuration.
  * Supports: iTerm2, Terminal.app, Alacritty, Ghostty, Kitty
  */
-export function detectAndLoadTerminalConfig(): TerminalConfig | null {
+export async function detectAndLoadTerminalConfig(): Promise<TerminalConfig | null> {
   if (process.platform === 'darwin') {
-    return detectMacOSTerminal();
+    return await detectMacOSTerminal();
   } else if (process.platform === 'win32') {
-    return detectWindowsTerminal();
+    return await detectWindowsTerminal();
   } else if (process.platform === 'linux') {
-    return detectLinuxTerminal();
+    return await detectLinuxTerminal();
   }
   return null;
 }
 
-function detectMacOSTerminal(): TerminalConfig | null {
+async function detectMacOSTerminal(): Promise<TerminalConfig | null> {
   // Check iTerm2 first (most popular)
-  const iterm2Config = loadiTerm2Config();
+  const iterm2Config = await loadiTerm2Config();
   if (iterm2Config) {
     log.debug('terminalConfig:detected', { terminal: 'iTerm2' });
     return iterm2Config;
   }
 
   // Check Terminal.app
-  const terminalAppConfig = loadTerminalAppConfig();
+  const terminalAppConfig = await loadTerminalAppConfig();
   if (terminalAppConfig) {
     log.debug('terminalConfig:detected', { terminal: 'Terminal.app' });
     return terminalAppConfig;
   }
 
   // Check Alacritty
-  const alacrittyConfig = loadAlacrittyConfig();
+  const alacrittyConfig = await loadAlacrittyConfig();
   if (alacrittyConfig) {
     log.debug('terminalConfig:detected', { terminal: 'Alacritty' });
     return alacrittyConfig;
   }
 
   // Check Ghostty
-  const ghosttyConfig = loadGhosttyConfig();
+  const ghosttyConfig = await loadGhosttyConfig();
   if (ghosttyConfig) {
     log.debug('terminalConfig:detected', { terminal: 'Ghostty' });
     return ghosttyConfig;
   }
 
   // Check Kitty
-  const kittyConfig = loadKittyConfig();
+  const kittyConfig = await loadKittyConfig();
   if (kittyConfig) {
     log.debug('terminalConfig:detected', { terminal: 'Kitty' });
     return kittyConfig;
@@ -89,7 +108,7 @@ function detectMacOSTerminal(): TerminalConfig | null {
   return null;
 }
 
-function detectWindowsTerminal(): TerminalConfig | null {
+async function detectWindowsTerminal(): Promise<TerminalConfig | null> {
   // Windows Terminal stores config in JSON at:
   // %LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json
   try {
@@ -104,8 +123,8 @@ function detectWindowsTerminal(): TerminalConfig | null {
       'settings.json'
     );
 
-    if (existsSync(settingsPath)) {
-      const config = loadWindowsTerminalConfig(settingsPath);
+    if (await pathExists(settingsPath)) {
+      const config = await loadWindowsTerminalConfig(settingsPath);
       if (config) {
         log.debug('terminalConfig:detected', { terminal: 'Windows Terminal' });
         return config;
@@ -118,21 +137,21 @@ function detectWindowsTerminal(): TerminalConfig | null {
   return null;
 }
 
-function detectLinuxTerminal(): TerminalConfig | null {
+async function detectLinuxTerminal(): Promise<TerminalConfig | null> {
   // Check common Linux terminals
-  const alacrittyConfig = loadAlacrittyConfig();
+  const alacrittyConfig = await loadAlacrittyConfig();
   if (alacrittyConfig) {
     log.debug('terminalConfig:detected', { terminal: 'Alacritty' });
     return alacrittyConfig;
   }
 
-  const kittyConfig = loadKittyConfig();
+  const kittyConfig = await loadKittyConfig();
   if (kittyConfig) {
     log.debug('terminalConfig:detected', { terminal: 'Kitty' });
     return kittyConfig;
   }
 
-  const ghosttyConfig = loadGhosttyConfig();
+  const ghosttyConfig = await loadGhosttyConfig();
   if (ghosttyConfig) {
     log.debug('terminalConfig:detected', { terminal: 'Ghostty' });
     return ghosttyConfig;
@@ -148,24 +167,20 @@ function detectLinuxTerminal(): TerminalConfig | null {
  * Load iTerm2 configuration from plist file.
  * iTerm2 stores preferences at: ~/Library/Preferences/com.googlecode.iterm2.plist
  */
-function loadiTerm2Config(): TerminalConfig | null {
+async function loadiTerm2Config(): Promise<TerminalConfig | null> {
   try {
     const plistPath = join(homedir(), 'Library', 'Preferences', 'com.googlecode.iterm2.plist');
-    if (!existsSync(plistPath)) {
+    if (!(await pathExists(plistPath))) {
       return null;
     }
 
     // Use plutil to convert plist to JSON (macOS built-in)
     let jsonContent: string;
     try {
-      jsonContent = execSync(`plutil -convert json -o - "${plistPath}"`, {
-        encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024, // 10MB
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
+      jsonContent = await plutilToJson(plistPath);
     } catch {
       // If plutil fails, try reading as XML plist
-      return loadiTerm2ConfigXML(plistPath);
+      return await loadiTerm2ConfigXML(plistPath);
     }
 
     const plist = JSON.parse(jsonContent);
@@ -281,9 +296,9 @@ function loadiTerm2Config(): TerminalConfig | null {
 /**
  * Fallback: Try to parse iTerm2 plist as XML
  */
-function loadiTerm2ConfigXML(plistPath: string): TerminalConfig | null {
+async function loadiTerm2ConfigXML(plistPath: string): Promise<TerminalConfig | null> {
   try {
-    const xmlContent = readFileSync(plistPath, 'utf8');
+    const xmlContent = await fs.readFile(plistPath, 'utf8');
     // Simple XML parsing for color values
     // This is a basic implementation - could be improved
     const colorRegex =
@@ -318,20 +333,16 @@ function parseiTerm2Color(colorObj: any): string | undefined {
 /**
  * Load Terminal.app configuration
  */
-function loadTerminalAppConfig(): TerminalConfig | null {
+async function loadTerminalAppConfig(): Promise<TerminalConfig | null> {
   try {
     const plistPath = join(homedir(), 'Library', 'Preferences', 'com.apple.Terminal.plist');
-    if (!existsSync(plistPath)) {
+    if (!(await pathExists(plistPath))) {
       return null;
     }
 
     let jsonContent: string;
     try {
-      jsonContent = execSync(`plutil -convert json -o - "${plistPath}"`, {
-        encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
+      jsonContent = await plutilToJson(plistPath);
     } catch {
       return null;
     }
@@ -407,19 +418,19 @@ function loadTerminalAppConfig(): TerminalConfig | null {
 /**
  * Load Alacritty configuration (TOML format)
  */
-function loadAlacrittyConfig(): TerminalConfig | null {
+async function loadAlacrittyConfig(): Promise<TerminalConfig | null> {
   try {
     const configPath = join(homedir(), '.config', 'alacritty', 'alacritty.toml');
-    if (!existsSync(configPath)) {
+    if (!(await pathExists(configPath))) {
       // Try YAML format (older versions)
       const yamlPath = join(homedir(), '.config', 'alacritty', 'alacritty.yml');
-      if (existsSync(yamlPath)) {
-        return loadAlacrittyYAML(yamlPath);
+      if (await pathExists(yamlPath)) {
+        return await loadAlacrittyYAML(yamlPath);
       }
       return null;
     }
 
-    const content = readFileSync(configPath, 'utf8');
+    const content = await fs.readFile(configPath, 'utf8');
     return parseAlacrittyTOML(content);
   } catch (error) {
     log.warn('terminalConfig:Alacritty:parseFailed', { error });
@@ -521,9 +532,9 @@ function parseAlacrittyTOML(content: string): TerminalConfig | null {
 /**
  * Parse Alacritty YAML config (simplified)
  */
-function loadAlacrittyYAML(yamlPath: string): TerminalConfig | null {
+async function loadAlacrittyYAML(yamlPath: string): Promise<TerminalConfig | null> {
   try {
-    const content = readFileSync(yamlPath, 'utf8');
+    const content = await fs.readFile(yamlPath, 'utf8');
     // Very basic YAML parsing for colors
     // For production, consider using a YAML parser library
     const theme: TerminalTheme = {};
@@ -551,14 +562,14 @@ function loadAlacrittyYAML(yamlPath: string): TerminalConfig | null {
 /**
  * Load Ghostty configuration
  */
-function loadGhosttyConfig(): TerminalConfig | null {
+async function loadGhosttyConfig(): Promise<TerminalConfig | null> {
   try {
     const configPath = join(homedir(), '.config', 'ghostty', 'config');
-    if (!existsSync(configPath)) {
+    if (!(await pathExists(configPath))) {
       return null;
     }
 
-    const content = readFileSync(configPath, 'utf8');
+    const content = await fs.readFile(configPath, 'utf8');
     return parseGhosttyConfig(content);
   } catch (error) {
     log.warn('terminalConfig:Ghostty:parseFailed', { error });
@@ -662,14 +673,14 @@ function parseGhosttyConfig(content: string): TerminalConfig | null {
 /**
  * Load Kitty configuration
  */
-function loadKittyConfig(): TerminalConfig | null {
+async function loadKittyConfig(): Promise<TerminalConfig | null> {
   try {
     const configPath = join(homedir(), '.config', 'kitty', 'kitty.conf');
-    if (!existsSync(configPath)) {
+    if (!(await pathExists(configPath))) {
       return null;
     }
 
-    const content = readFileSync(configPath, 'utf8');
+    const content = await fs.readFile(configPath, 'utf8');
     return parseKittyConfig(content);
   } catch (error) {
     log.warn('terminalConfig:Kitty:parseFailed', { error });
@@ -769,9 +780,9 @@ function parseKittyConfig(content: string): TerminalConfig | null {
 /**
  * Load Windows Terminal configuration
  */
-function loadWindowsTerminalConfig(settingsPath: string): TerminalConfig | null {
+async function loadWindowsTerminalConfig(settingsPath: string): Promise<TerminalConfig | null> {
   try {
-    const content = readFileSync(settingsPath, 'utf8');
+    const content = await fs.readFile(settingsPath, 'utf8');
     const config = JSON.parse(content);
 
     // Windows Terminal stores profiles in "profiles.list"

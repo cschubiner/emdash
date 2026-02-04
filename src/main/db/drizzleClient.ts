@@ -174,9 +174,8 @@ export async function createDrizzleClient(
   }
 
   const busyTimeout = options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS;
-  const db =
-    options.database ??
-    (await openDatabase(options.filePath ?? resolveDatabasePath(), busyTimeout));
+  const filePath = options.filePath ?? (await resolveDatabasePath());
+  const db = options.database ?? (await openDatabase(filePath, busyTimeout));
 
   const { remote, batch } = createCallbacks(db);
   const drizzleDb = drizzle(remote, batch, { schema });

@@ -7,6 +7,14 @@ import { getMainWindow } from '../app/window';
 import { errorTracking } from '../errorTracking';
 
 const execAsync = promisify(exec);
+const pathExists = async (p: string): Promise<boolean> => {
+  try {
+    await fs.promises.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
 const DEFAULT_REMOTE = 'origin';
 const DEFAULT_BRANCH = 'main';
 
@@ -94,7 +102,7 @@ export function registerProjectIpc() {
 
       const resolvedProjectPath = await resolveRealPath(projectPath);
       const gitPath = join(resolvedProjectPath, '.git');
-      const isGitRepo = fs.existsSync(gitPath);
+      const isGitRepo = await pathExists(gitPath);
 
       if (!isGitRepo) {
         return { isGitRepo: false, path: resolvedProjectPath };

@@ -21,15 +21,8 @@ import { databaseService } from './DatabaseService';
 const owners = new Map<string, WebContents>();
 const listeners = new Set<string>();
 const providerPtyTimers = new Map<string, number>();
-// Map PTY IDs to provider IDs for multi-agent tracking
-const ptyProviderMap = new Map<string, ProviderId>();
-// Prevent duplicate finish handling when cleanup and onExit race for the same PTY.
-const finalizedPtys = new Set<string>();
 // Track WebContents that have a 'destroyed' listener to avoid duplicates
 const wcDestroyedListeners = new Set<number>();
-let isAppQuitting = false;
-
-type FinishCause = 'process_exit' | 'app_quit' | 'owner_destroyed' | 'manual_kill';
 
 // Guard IPC sends to prevent crashes when WebContents is destroyed
 function safeSendToOwner(id: string, channel: string, payload: unknown): boolean {
@@ -138,6 +131,14 @@ export function registerPtyIpc(): void {
               const path = require('path');
               const os = require('os');
               const crypto = require('crypto');
+              const pathExists = async (p: string): Promise<boolean> => {
+                try {
+                  await fs.promises.access(p);
+                  return true;
+                } catch {
+                  return false;
+                }
+              };
 
               // Check if this is Claude by looking at the shell
               const isClaudeOrSimilar = shell.includes('claude') || shell.includes('aider');
@@ -158,17 +159,17 @@ export function registerPtyIpc(): void {
                 let sessionExists = false;
 
                 // Check if the hash-based directory exists
-                sessionExists = fs.existsSync(claudeHashDir);
+                sessionExists = await pathExists(claudeHashDir);
 
                 // If not, check for path-based directory
                 if (!sessionExists) {
-                  sessionExists = fs.existsSync(claudePathDir);
+                  sessionExists = await pathExists(claudePathDir);
                 }
 
                 // If still not found, scan the projects directory for any matching directory
-                if (!sessionExists && fs.existsSync(projectsDir)) {
+                if (!sessionExists && (await pathExists(projectsDir))) {
                   try {
-                    const dirs = fs.readdirSync(projectsDir);
+                    const dirs = await fs.promises.readdir(projectsDir);
                     // Check if any directory contains part of the working directory path
                     const cwdParts = cwd.split('/').filter((p) => p.length > 0);
                     const lastParts = cwdParts.slice(-3).join('-'); // Use last 3 parts of path
@@ -225,12 +226,7 @@ export function registerPtyIpc(): void {
               return;
             }
             safeSendToOwner(id, `pty:exit:${id}`, { exitCode, signal });
-            maybeMarkProviderFinish(
-              id,
-              exitCode,
-              signal,
-              isAppQuitting ? 'app_quit' : 'process_exit'
-            );
+            maybeMarkProviderFinish(id, exitCode, signal);
             owners.delete(id);
             listeners.delete(id);
           });
@@ -248,12 +244,7 @@ export function registerPtyIpc(): void {
             for (const [ptyId, owner] of owners.entries()) {
               if (owner === wc) {
                 try {
-                  maybeMarkProviderFinish(
-                    ptyId,
-                    null,
-                    undefined,
-                    isAppQuitting ? 'app_quit' : 'owner_destroyed'
-                  );
+                  maybeMarkProviderFinish(ptyId, null, undefined);
                   killPty(ptyId);
                 } catch {}
                 owners.delete(ptyId);
@@ -263,11 +254,11 @@ export function registerPtyIpc(): void {
           });
         }
 
-        // Track agent start even when reusing PTY (happens after shell respawn)
-        // This ensures subsequent agent runs in the same task are tracked
-        maybeMarkProviderStart(id);
+        if (!existing) {
+          maybeMarkProviderStart(id);
+        }
 
-        // Signal that PTY is ready
+        // Signal that PTY is ready so renderer may inject initial prompt safely
         try {
           const windows = BrowserWindow.getAllWindows();
           windows.forEach((w) => {
@@ -309,20 +300,6 @@ export function registerPtyIpc(): void {
   ipcMain.on('pty:input', (_event, args: { id: string; data: string }) => {
     try {
       writePty(args.id, args.data);
-
-      // Track prompts sent to agents (not shell terminals)
-      // Only count Enter key presses for known agent PTYs
-      if (args.data === '\r' || args.data === '\n') {
-        // Check if this PTY is associated with an agent
-        const providerId = ptyProviderMap.get(args.id) || parseProviderPty(args.id)?.providerId;
-
-        if (providerId) {
-          // This is an agent terminal, track the prompt
-          telemetry.capture('agent_prompt_sent', {
-            provider: providerId,
-          });
-        }
-      }
     } catch (e) {
       log.error('pty:input error', { id: args.id, error: e });
     }
@@ -339,7 +316,7 @@ export function registerPtyIpc(): void {
   ipcMain.on('pty:kill', (_event, args: { id: string }) => {
     try {
       // Ensure telemetry timers are cleared even on manual kill
-      maybeMarkProviderFinish(args.id, null, undefined, 'manual_kill');
+      maybeMarkProviderFinish(args.id, null, undefined);
       killPty(args.id);
       owners.delete(args.id);
       listeners.delete(args.id);
@@ -377,7 +354,7 @@ export function registerPtyIpc(): void {
 
   ipcMain.handle('terminal:getTheme', async () => {
     try {
-      const config = detectAndLoadTerminalConfig();
+      const config = await detectAndLoadTerminalConfig();
       if (config) {
         return { ok: true, config };
       }
@@ -402,7 +379,6 @@ export function registerPtyIpc(): void {
         rows?: number;
         autoApprove?: boolean;
         initialPrompt?: string;
-        env?: Record<string, string>;
         resume?: boolean;
       }
     ) => {
@@ -411,14 +387,12 @@ export function registerPtyIpc(): void {
       }
 
       try {
-        const { id, providerId, cwd, cols, rows, autoApprove, initialPrompt, env, resume } = args;
+        const { id, providerId, cwd, cols, rows, autoApprove, initialPrompt, resume } = args;
         const existing = getPty(id);
 
         if (existing) {
           const wc = event.sender;
           owners.set(id, wc);
-          // Still track agent start even when reusing PTY (happens after shell respawn)
-          maybeMarkProviderStart(id, providerId as ProviderId);
           return { ok: true, reused: true };
         }
 
@@ -430,7 +404,6 @@ export function registerPtyIpc(): void {
           rows,
           autoApprove,
           initialPrompt,
-          env,
           resume,
         });
 
@@ -451,7 +424,6 @@ export function registerPtyIpc(): void {
             rows,
             autoApprove,
             initialPrompt,
-            env,
             skipResume: !resume,
           });
           usedFallback = true;
@@ -467,12 +439,7 @@ export function registerPtyIpc(): void {
 
           proc.onExit(({ exitCode, signal }) => {
             safeSendToOwner(id, `pty:exit:${id}`, { exitCode, signal });
-            maybeMarkProviderFinish(
-              id,
-              exitCode,
-              signal,
-              isAppQuitting ? 'app_quit' : 'process_exit'
-            );
+            maybeMarkProviderFinish(id, exitCode, signal);
             // For direct spawn: keep owner (shell respawn reuses it), delete listeners (shell respawn re-adds)
             // For fallback: clean up owner since no shell respawn happens
             if (usedFallback) {
@@ -492,12 +459,7 @@ export function registerPtyIpc(): void {
             for (const [ptyId, owner] of owners.entries()) {
               if (owner === wc) {
                 try {
-                  maybeMarkProviderFinish(
-                    ptyId,
-                    null,
-                    undefined,
-                    isAppQuitting ? 'app_quit' : 'owner_destroyed'
-                  );
+                  maybeMarkProviderFinish(ptyId, null, undefined);
                   killPty(ptyId);
                 } catch {}
                 owners.delete(ptyId);
@@ -507,7 +469,7 @@ export function registerPtyIpc(): void {
           });
         }
 
-        maybeMarkProviderStart(id, providerId as ProviderId);
+        maybeMarkProviderStart(id);
 
         try {
           const windows = BrowserWindow.getAllWindows();
@@ -547,30 +509,7 @@ function providerRunKey(providerId: ProviderId, taskId: string) {
   return `${providerId}:${taskId}`;
 }
 
-function maybeMarkProviderStart(id: string, providerId?: ProviderId) {
-  finalizedPtys.delete(id);
-
-  // First check if we have a direct provider ID (for multi-agent mode)
-  if (providerId && PROVIDER_IDS.includes(providerId)) {
-    ptyProviderMap.set(id, providerId);
-    const key = `${providerId}:${id}`;
-    if (providerPtyTimers.has(key)) return;
-    providerPtyTimers.set(key, Date.now());
-    telemetry.capture('agent_run_start', { provider: providerId });
-    return;
-  }
-
-  // Check if we have a stored mapping (for subsequent calls)
-  const storedProvider = ptyProviderMap.get(id);
-  if (storedProvider) {
-    const key = `${storedProvider}:${id}`;
-    if (providerPtyTimers.has(key)) return;
-    providerPtyTimers.set(key, Date.now());
-    telemetry.capture('agent_run_start', { provider: storedProvider });
-    return;
-  }
-
-  // Fall back to parsing the ID (single-agent mode)
+function maybeMarkProviderStart(id: string) {
   const parsed = parseProviderPty(id);
   if (!parsed) return;
   const key = providerRunKey(parsed.providerId, parsed.taskId);
@@ -582,33 +521,13 @@ function maybeMarkProviderStart(id: string, providerId?: ProviderId) {
 function maybeMarkProviderFinish(
   id: string,
   exitCode: number | null | undefined,
-  signal: number | undefined,
-  cause: FinishCause
+  signal: number | undefined
 ) {
-  if (finalizedPtys.has(id)) return;
-  finalizedPtys.add(id);
-
-  let providerId: ProviderId | undefined;
-  let key: string;
-
-  // First check if we have a stored mapping (multi-agent mode)
-  const storedProvider = ptyProviderMap.get(id);
-  if (storedProvider) {
-    providerId = storedProvider;
-    key = `${storedProvider}:${id}`;
-  } else {
-    // Fall back to parsing the ID (single-agent mode)
-    const parsed = parseProviderPty(id);
-    if (!parsed) return;
-    providerId = parsed.providerId;
-    key = providerRunKey(parsed.providerId, parsed.taskId);
-  }
-
+  const parsed = parseProviderPty(id);
+  if (!parsed) return;
+  const key = providerRunKey(parsed.providerId, parsed.taskId);
   const started = providerPtyTimers.get(key);
   providerPtyTimers.delete(key);
-
-  // Clean up the provider mapping
-  ptyProviderMap.delete(id);
 
   // No valid exit code means the process was killed during cleanup, not a real completion
   if (typeof exitCode !== 'number') return;
@@ -618,14 +537,14 @@ function maybeMarkProviderFinish(
   const outcome = exitCode !== 0 && !wasSignaled ? 'error' : 'ok';
 
   telemetry.capture('agent_run_finish', {
-    provider: providerId,
+    provider: parsed.providerId,
     outcome,
     duration_ms: duration,
   });
 
-  if (cause === 'process_exit' && exitCode === 0) {
-    const providerName = getProvider(providerId)?.name ?? providerId;
-    showCompletionNotification(providerName);
+  if (exitCode === 0) {
+    const providerName = getProvider(parsed.providerId)?.name ?? parsed.providerId;
+    void showCompletionNotification(providerName);
   }
 }
 
@@ -633,9 +552,9 @@ function maybeMarkProviderFinish(
  * Show a system notification for provider completion.
  * Only shows if: notifications are enabled, supported, and app is not focused.
  */
-function showCompletionNotification(providerName: string) {
+async function showCompletionNotification(providerName: string) {
   try {
-    const settings = getAppSettings();
+    const settings = await getAppSettings();
 
     if (!settings.notifications?.enabled) return;
     if (!Notification.isSupported()) return;
@@ -658,11 +577,10 @@ function showCompletionNotification(providerName: string) {
 // Kill all PTYs on app shutdown to prevent crash loop
 try {
   app.on('before-quit', () => {
-    isAppQuitting = true;
     for (const id of Array.from(owners.keys())) {
       try {
         // Ensure telemetry timers are cleared on app quit
-        maybeMarkProviderFinish(id, null, undefined, 'app_quit');
+        maybeMarkProviderFinish(id, null, undefined);
         killPty(id);
       } catch {}
     }

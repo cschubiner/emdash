@@ -11,6 +11,14 @@ import { homedir } from 'os';
 
 const execAsync = promisify(exec);
 const githubService = new GitHubService();
+const pathExists = async (p: string): Promise<boolean> => {
+  try {
+    await fs.promises.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const slugify = (name: string) =>
   name
@@ -146,21 +154,21 @@ export function registerGithubIpc() {
 
       // Ensure parent directory exists
       const dir = path.dirname(localPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      await fs.promises.mkdir(dir, { recursive: true });
 
       // If already a git repo, short‑circuit
       try {
-        if (fs.existsSync(path.join(localPath, '.git'))) return { success: true };
+        if (await pathExists(path.join(localPath, '.git'))) return { success: true };
       } catch {}
 
       // Use a local bare mirror cache keyed by normalized URL
       const cacheRoot = path.join(app.getPath('userData'), 'repo-cache');
-      if (!fs.existsSync(cacheRoot)) fs.mkdirSync(cacheRoot, { recursive: true });
+      await fs.promises.mkdir(cacheRoot, { recursive: true });
       const norm = (u: string) => u.replace(/\.git$/i, '').trim();
       const cacheKey = require('crypto').createHash('sha1').update(norm(repoUrl)).digest('hex');
       const mirrorPath = path.join(cacheRoot, `${cacheKey}.mirror`);
 
-      if (!fs.existsSync(mirrorPath)) {
+      if (!(await pathExists(mirrorPath))) {
         await execAsync(`git clone --mirror --filter=blob:none ${q(repoUrl)} ${q(mirrorPath)}`);
       } else {
         try {
@@ -292,7 +300,7 @@ export function registerGithubIpc() {
         const slug = slugify(taskName) || `pr-${prNumber}`;
         let worktreePath = path.join(worktreesDir, slug);
 
-        if (fs.existsSync(worktreePath)) {
+        if (await pathExists(worktreePath)) {
           worktreePath = path.join(worktreesDir, `${slug}-${Date.now()}`);
         }
 
@@ -426,17 +434,15 @@ export function registerGithubIpc() {
 
         // Get project directory from settings
         const { getAppSettings } = await import('../settings');
-        const settings = getAppSettings();
+        const settings = await getAppSettings();
         const projectDir =
           settings.projects?.defaultDirectory || path.join(homedir(), 'emdash-projects');
 
         // Ensure project directory exists
-        if (!fs.existsSync(projectDir)) {
-          fs.mkdirSync(projectDir, { recursive: true });
-        }
+        await fs.promises.mkdir(projectDir, { recursive: true });
 
         localPath = path.join(projectDir, name);
-        if (fs.existsSync(localPath)) {
+        if (await pathExists(localPath)) {
           return {
             success: false,
             error: `Directory ${localPath} already exists`,
@@ -492,9 +498,9 @@ export function registerGithubIpc() {
         log.error('Failed to create new project:', error);
 
         // Cleanup on failure
-        if (localDirCreated && localPath && fs.existsSync(localPath)) {
+        if (localDirCreated && localPath && (await pathExists(localPath))) {
           try {
-            fs.rmSync(localPath, { recursive: true, force: true });
+            await fs.promises.rm(localPath, { recursive: true, force: true });
           } catch (cleanupError) {
             log.warn('Failed to cleanup local directory:', cleanupError);
           }

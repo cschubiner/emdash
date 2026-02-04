@@ -13,10 +13,19 @@ export type HostPreviewEvent = {
   line?: string;
 };
 
-function detectPackageManager(dir: string): 'pnpm' | 'yarn' | 'npm' {
+const pathExists = async (p: string): Promise<boolean> => {
   try {
-    if (fs.existsSync(path.join(dir, 'pnpm-lock.yaml'))) return 'pnpm';
-    if (fs.existsSync(path.join(dir, 'yarn.lock'))) return 'yarn';
+    await fs.promises.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+async function detectPackageManager(dir: string): Promise<'pnpm' | 'yarn' | 'npm'> {
+  try {
+    if (await pathExists(path.join(dir, 'pnpm-lock.yaml'))) return 'pnpm';
+    if (await pathExists(path.join(dir, 'yarn.lock'))) return 'yarn';
     return 'npm';
   } catch {
     return 'npm';
@@ -42,10 +51,10 @@ class HostPreviewService extends EventEmitter {
 
   async setup(taskId: string, taskPath: string): Promise<{ ok: boolean; error?: string }> {
     const cwd = path.resolve(taskPath);
-    const pm = detectPackageManager(cwd);
+    const pm = await detectPackageManager(cwd);
     const cmd = pm;
     // Prefer clean install for npm when lockfile exists
-    const hasPkgLock = fs.existsSync(path.join(cwd, 'package-lock.json'));
+    const hasPkgLock = await pathExists(path.join(cwd, 'package-lock.json'));
     const args = pm === 'npm' ? (hasPkgLock ? ['ci'] : ['install']) : ['install'];
     try {
       const child = spawn(cmd, args, {
@@ -129,8 +138,8 @@ class HostPreviewService extends EventEmitter {
       taskId,
       taskPath,
       resolvedCwd: cwd,
-      cwdExists: fs.existsSync(cwd),
-      hasPackageJson: fs.existsSync(path.join(cwd, 'package.json')),
+      cwdExists: await pathExists(cwd),
+      hasPackageJson: await pathExists(path.join(cwd, 'package.json')),
     });
 
     // Check if process already exists for this taskId
@@ -170,19 +179,19 @@ class HostPreviewService extends EventEmitter {
       }
     }
 
-    const pm = detectPackageManager(cwd);
+    const pm = await detectPackageManager(cwd);
     // Preflight: if the task lacks node_modules but the parent has it, try linking
     try {
       const parent = (opts?.parentProjectPath || '').trim();
       if (parent) {
         const wsNm = path.join(cwd, 'node_modules');
         const parentNm = path.join(parent, 'node_modules');
-        const wsExists = fs.existsSync(wsNm);
-        const parentExists = fs.existsSync(parentNm);
+        const wsExists = await pathExists(wsNm);
+        const parentExists = await pathExists(parentNm);
         if (!wsExists && parentExists) {
           try {
             const linkType = process.platform === 'win32' ? 'junction' : 'dir';
-            fs.symlinkSync(parentNm, wsNm, linkType as any);
+            await fs.promises.symlink(parentNm, wsNm, linkType as any);
             log.info?.('[hostPreview] linked node_modules', {
               taskId,
               wsNm,
@@ -204,7 +213,7 @@ class HostPreviewService extends EventEmitter {
       script = opts.script.trim();
     } else {
       try {
-        const raw = fs.readFileSync(pkgPath, 'utf8');
+        const raw = await fs.promises.readFile(pkgPath, 'utf8');
         const pkg = JSON.parse(raw);
         const scripts = (pkg && pkg.scripts) || {};
         const prefs = ['dev', 'start', 'serve', 'preview'];
@@ -222,10 +231,10 @@ class HostPreviewService extends EventEmitter {
 
     // Auto-install if package.json exists and node_modules is missing
     try {
-      const hasPkg = fs.existsSync(pkgPath);
-      const hasNm = fs.existsSync(path.join(cwd, 'node_modules'));
+      const hasPkg = await pathExists(pkgPath);
+      const hasNm = await pathExists(path.join(cwd, 'node_modules'));
       if (hasPkg && !hasNm) {
-        const hasLock = fs.existsSync(path.join(cwd, 'package-lock.json'));
+        const hasLock = await pathExists(path.join(cwd, 'package-lock.json'));
         const installArgs = pm === 'npm' ? (hasLock ? ['ci'] : ['install']) : ['install'];
         const inst = spawn(pm, installArgs, {
           cwd,
@@ -264,7 +273,7 @@ class HostPreviewService extends EventEmitter {
 
     // Add CLI flags for common frameworks based on scripts and dependencies
     try {
-      const raw = fs.readFileSync(pkgPath, 'utf8');
+      const raw = await fs.promises.readFile(pkgPath, 'utf8');
       const pkg = JSON.parse(raw);
       const scripts = (pkg && pkg.scripts) || {};
       const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) } as Record<

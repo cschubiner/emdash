@@ -118,7 +118,7 @@ export function registerTelemetryIpc() {
 
   ipcMain.handle('telemetry:set-enabled', async (_event, enabled: boolean) => {
     try {
-      setTelemetryEnabledViaUser(Boolean(enabled));
+      await setTelemetryEnabledViaUser(Boolean(enabled));
       return { success: true, status: getTelemetryStatus() };
     } catch (e: any) {
       return { success: false, error: e?.message || 'update_failed' };
@@ -127,7 +127,7 @@ export function registerTelemetryIpc() {
 
   ipcMain.handle('telemetry:set-onboarding-seen', async (_event, flag: boolean) => {
     try {
-      setOnboardingSeen(Boolean(flag));
+      await setOnboardingSeen(Boolean(flag));
       return { success: true, status: getTelemetryStatus() };
     } catch (e: any) {
       return { success: false, error: e?.message || 'update_failed' };

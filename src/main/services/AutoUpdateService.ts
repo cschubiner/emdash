@@ -80,33 +80,7 @@ class AutoUpdateService {
 
   private getAppVersion(): string {
     try {
-      const { readFileSync } = require('fs');
-      const { join } = require('path');
-
-      // In development, look for package.json in project root
-      const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
-
-      const possiblePaths = isDev
-        ? [
-            join(__dirname, '../../../../package.json'), // from dist/main/main/services
-            join(__dirname, '../../../package.json'),
-            join(process.cwd(), 'package.json'),
-          ]
-        : [join(app.getAppPath(), 'package.json')];
-
-      for (const path of possiblePaths) {
-        try {
-          const packageJson = JSON.parse(readFileSync(path, 'utf-8'));
-          if (packageJson.name === 'emdash' && packageJson.version) {
-            return packageJson.version;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      // Fallback: hardcoded version for dev
-      return '0.3.46';
+      return app.getVersion();
     } catch {
       return '0.3.46';
     }

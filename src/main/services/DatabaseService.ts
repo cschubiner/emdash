@@ -83,7 +83,7 @@ export class DatabaseService {
   private static migrationsApplied = false;
   private db: sqlite3Type.Database | null = null;
   private sqlite3: typeof sqlite3Type | null = null;
-  private dbPath: string;
+  private dbPath: string | null = null;
   private disabled: boolean = false;
   private lastMigrationSummary: MigrationSummary | null = null;
 
@@ -91,7 +91,6 @@ export class DatabaseService {
     if (process.env.EMDASH_DISABLE_NATIVE_DB === '1') {
       this.disabled = true;
     }
-    this.dbPath = resolveDatabasePath();
   }
 
   async initialize(): Promise<void> {
@@ -108,8 +107,9 @@ export class DatabaseService {
         return Promise.reject(e);
       }
     }
+    this.dbPath = await resolveDatabasePath();
     return new Promise((resolve, reject) => {
-      this.db = new this.sqlite3!.Database(this.dbPath, async (err) => {
+      this.db = new this.sqlite3!.Database(this.dbPath!, async (err) => {
         if (err) {
           // Track critical database connection error
           await errorTracking.captureDatabaseError(err, 'initialize_connection', {
@@ -177,7 +177,10 @@ export class DatabaseService {
   async getProjects(): Promise<Project[]> {
     if (this.disabled) return [];
     const { db } = await getDrizzleClient();
-    const rows = await db.select().from(projectsTable).orderBy(desc(projectsTable.updatedAt));
+    const rows: ProjectRow[] = await db
+      .select()
+      .from(projectsTable)
+      .orderBy(desc(projectsTable.updatedAt));
     return rows.map((row) => this.mapDrizzleProjectRow(row));
   }
 
@@ -399,7 +402,7 @@ export class DatabaseService {
   async getConversations(taskId: string): Promise<Conversation[]> {
     if (this.disabled) return [];
     const { db } = await getDrizzleClient();
-    const rows = await db
+    const rows: ConversationRow[] = await db
       .select()
       .from(conversationsTable)
       .where(eq(conversationsTable.taskId, taskId))
@@ -468,7 +471,7 @@ export class DatabaseService {
           ? JSON.stringify(message.metadata)
           : null;
     const { db } = await getDrizzleClient();
-    await db.transaction(async (tx) => {
+    await db.transaction(async (tx: any) => {
       await tx
         .insert(messagesTable)
         .values({
@@ -493,7 +496,7 @@ export class DatabaseService {
   async getMessages(conversationId: string): Promise<Message[]> {
     if (this.disabled) return [];
     const { db } = await getDrizzleClient();
-    const rows = await db
+    const rows: MessageRow[] = await db
       .select()
       .from(messagesTable)
       .where(eq(messagesTable.conversationId, conversationId))
@@ -532,7 +535,7 @@ export class DatabaseService {
     const { db } = await getDrizzleClient();
 
     // Get the next display order
-    const existingConversations = await db
+    const existingConversations: ConversationRow[] = await db
       .select()
       .from(conversationsTable)
       .where(eq(conversationsTable.taskId, taskId));
@@ -585,7 +588,7 @@ export class DatabaseService {
     if (this.disabled) return;
     const { db } = await getDrizzleClient();
 
-    await db.transaction(async (tx) => {
+    await db.transaction(async (tx: any) => {
       // Deactivate all conversations for this task
       await tx
         .update(conversationsTable)
@@ -617,7 +620,7 @@ export class DatabaseService {
     if (this.disabled) return;
     const { db } = await getDrizzleClient();
 
-    await db.transaction(async (tx) => {
+    await db.transaction(async (tx: any) => {
       for (let i = 0; i < conversationIds.length; i++) {
         await tx
           .update(conversationsTable)
@@ -869,7 +872,7 @@ export class DatabaseService {
     if (!this.db) throw new Error('Database not initialized');
     if (DatabaseService.migrationsApplied) return;
 
-    const migrationsPath = resolveMigrationsPath();
+    const migrationsPath = await resolveMigrationsPath();
     if (!migrationsPath) {
       // Provide a detailed error message for debugging
       const errorMsg = [
@@ -1007,8 +1010,12 @@ export class DatabaseService {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const path = require('node:path');
       const journalPath = path.join(migrationsFolder, 'meta', '_journal.json');
-      if (!fs.existsSync(journalPath)) return null;
-      const parsed: unknown = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+      try {
+        await fs.promises.access(journalPath);
+      } catch {
+        return null;
+      }
+      const parsed: unknown = JSON.parse(await fs.promises.readFile(journalPath, 'utf8'));
       if (!parsed || typeof parsed !== 'object') return null;
       const entries = (parsed as { entries?: unknown }).entries;
       if (!Array.isArray(entries)) return null;
@@ -1042,8 +1049,12 @@ export class DatabaseService {
     const crypto = require('node:crypto');
 
     const journalPath = path.join(migrationsFolder, 'meta', '_journal.json');
-    if (!fs.existsSync(journalPath)) return;
-    const journalParsed: unknown = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+    try {
+      await fs.promises.access(journalPath);
+    } catch {
+      return;
+    }
+    const journalParsed: unknown = JSON.parse(await fs.promises.readFile(journalPath, 'utf8'));
     const entries = (journalParsed as { entries?: unknown }).entries;
     if (!Array.isArray(entries)) return;
     const entry = entries.find((e) => {
@@ -1053,8 +1064,12 @@ export class DatabaseService {
     if (!entry) return;
 
     const sqlPath = path.join(migrationsFolder, `${tag}.sql`);
-    if (!fs.existsSync(sqlPath)) return;
-    const contents = fs.readFileSync(sqlPath, 'utf8');
+    try {
+      await fs.promises.access(sqlPath);
+    } catch {
+      return;
+    }
+    const contents = await fs.promises.readFile(sqlPath, 'utf8');
     const hash = crypto.createHash('sha256').update(contents).digest('hex');
 
     if (applied.has(hash)) return;

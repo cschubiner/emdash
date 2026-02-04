@@ -5,53 +5,6 @@ import * as path from 'path';
 import { getCachedGitStatus } from './gitStatusCache';
 
 const execFileAsync = promisify(execFile);
-const MAX_UNTRACKED_LINECOUNT_BYTES = 512 * 1024;
-const MAX_UNTRACKED_DIFF_BYTES = 512 * 1024;
-
-async function countFileNewlinesCapped(filePath: string, maxBytes: number): Promise<number | null> {
-  let stat: fs.Stats;
-  try {
-    stat = await fs.promises.stat(filePath);
-  } catch {
-    return null;
-  }
-
-  if (!stat.isFile() || stat.size > maxBytes) {
-    return null;
-  }
-
-  return await new Promise<number | null>((resolve) => {
-    let count = 0;
-    const stream = fs.createReadStream(filePath);
-    stream.on('data', (chunk: string | Buffer) => {
-      const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-      for (let i = 0; i < buffer.length; i++) {
-        if (buffer[i] === 0x0a) count++;
-      }
-    });
-    stream.on('error', () => resolve(null));
-    stream.on('end', () => resolve(count));
-  });
-}
-
-async function readFileTextCapped(filePath: string, maxBytes: number): Promise<string | null> {
-  let stat: fs.Stats;
-  try {
-    stat = await fs.promises.stat(filePath);
-  } catch {
-    return null;
-  }
-
-  if (!stat.isFile() || stat.size > maxBytes) {
-    return null;
-  }
-
-  try {
-    return await fs.promises.readFile(filePath, 'utf8');
-  } catch {
-    return null;
-  }
-}
 
 export type GitChange = {
   path: string;
@@ -185,6 +138,7 @@ async function computeStatus(taskPath: string): Promise<GitChange[]> {
 
     // Check if file is staged (first character of status code indicates staged changes)
     const isStaged = statusCode[0] !== ' ' && statusCode[0] !== '?';
+
     const staged = stagedMap.get(filePath);
     const unstaged = unstagedMap.get(filePath);
     let additions = (staged?.additions || 0) + (unstaged?.additions || 0);
@@ -206,10 +160,6 @@ async function computeStatus(taskPath: string): Promise<GitChange[]> {
 
 export async function stageFile(taskPath: string, filePath: string): Promise<void> {
   await execFileAsync('git', ['add', '--', filePath], { cwd: taskPath });
-}
-
-export async function stageAllFiles(taskPath: string): Promise<void> {
-  await execFileAsync('git', ['add', '-A'], { cwd: taskPath });
 }
 
 export async function unstageFile(taskPath: string, filePath: string): Promise<void> {
@@ -245,9 +195,10 @@ export async function revertFile(
   } catch {
     // File doesn't exist in HEAD (it's a new/untracked file), delete it
     const absPath = path.join(taskPath, filePath);
-    if (fs.existsSync(absPath)) {
-      fs.unlinkSync(absPath);
-    }
+    try {
+      await fs.promises.access(absPath);
+      await fs.promises.unlink(absPath);
+    } catch {}
     return { action: 'reverted' };
   }
 
@@ -299,14 +250,16 @@ export async function getFileDiff(
     if (result.length === 0) {
       try {
         const abs = path.join(taskPath, filePath);
-        const content = await readFileTextCapped(abs, MAX_UNTRACKED_DIFF_BYTES);
-        if (content !== null) {
+        try {
+          await fs.promises.access(abs);
+          const content = await fs.promises.readFile(abs, 'utf8');
           return { lines: content.split('\n').map((l) => ({ right: l, type: 'add' as const })) };
+        } catch {
+          const { stdout: prev } = await execFileAsync('git', ['show', `HEAD:${filePath}`], {
+            cwd: taskPath,
+          });
+          return { lines: prev.split('\n').map((l) => ({ left: l, type: 'del' as const })) };
         }
-        const { stdout: prev } = await execFileAsync('git', ['show', `HEAD:${filePath}`], {
-          cwd: taskPath,
-        });
-        return { lines: prev.split('\n').map((l) => ({ left: l, type: 'del' as const })) };
       } catch {
         return { lines: [] };
       }
@@ -314,12 +267,15 @@ export async function getFileDiff(
 
     return { lines: result };
   } catch {
-    const abs = path.join(taskPath, filePath);
-    const content = await readFileTextCapped(abs, MAX_UNTRACKED_DIFF_BYTES);
-    if (content !== null) {
+    try {
+      const abs = path.join(taskPath, filePath);
+      const content = await fs.promises.readFile(abs, 'utf8');
       const lines = content.split('\n');
       return { lines: lines.map((l) => ({ right: l, type: 'add' as const })) };
+    } catch {
+      // fall through to git diff fallback below
     }
+
     try {
       const { stdout } = await execFileAsync(
         'git',
