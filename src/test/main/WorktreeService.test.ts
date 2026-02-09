@@ -218,7 +218,7 @@ describe('WorktreeService', () => {
       execSync('git commit -m "update gitignore"', { cwd: sourceDir, stdio: 'pipe' });
 
       // Access the private method via the service instance
-      const patterns = (service as any).getPreservePatterns(sourceDir);
+      const patterns = await (service as any).getPreservePatterns(sourceDir);
       expect(patterns).toEqual(['custom.secret']);
 
       const result = await service.preserveFilesToWorktree(sourceDir, destDir, patterns);
@@ -226,7 +226,7 @@ describe('WorktreeService', () => {
     });
 
     it('should fall back to defaults when .emdash.json is missing', async () => {
-      const patterns = (service as any).getPreservePatterns(sourceDir);
+      const patterns = await (service as any).getPreservePatterns(sourceDir);
       expect(patterns).toContain('.env');
       expect(patterns).toContain('.envrc');
     });

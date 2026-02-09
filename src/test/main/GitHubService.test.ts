@@ -87,6 +87,7 @@ describe('GitHubService.isAuthenticated', () => {
 
     expect(result).toBe(true);
     expect(execCalls.find((cmd) => cmd.startsWith('gh auth status'))).toBeDefined();
-    expect(setPasswordMock).toHaveBeenCalledWith('emdash-github', 'github-token', 'gho_mocktoken');
+    // When gh is already authenticated, we don't need to fetch/store a token.
+    expect(setPasswordMock).not.toHaveBeenCalled();
   });
 });
