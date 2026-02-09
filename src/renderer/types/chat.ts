@@ -32,6 +32,10 @@ export interface TaskMetadata {
     agentRuns?: AgentRun[];
     // Legacy list of agent ids before agentRuns existed (for backward compatibility)
     agents?: ProviderId[];
+    // Per-task UI preference for split view (all panes visible)
+    splitViewEnabled?: boolean;
+    // Per-task active pane (worktreeId) for multi-agent view
+    activeVariantId?: string | null;
     variants: Array<{
       id: string;
       agent: ProviderId;

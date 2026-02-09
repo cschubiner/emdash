@@ -53,6 +53,26 @@ import {
 
 const PINNED_TASKS_KEY = 'emdash-pinned-tasks';
 
+// Sort projects and tasks by recency (most recent activity first)
+const sortByRecency = <T extends { tasks?: { updatedAt?: string }[] }>(list: T[]): T[] => {
+  const getTimestamp = (updatedAt?: string): number =>
+    updatedAt ? new Date(updatedAt).getTime() : 0;
+
+  const getMaxTaskUpdatedAt = (project: T): number => {
+    if (!project.tasks || project.tasks.length === 0) return 0;
+    return Math.max(...project.tasks.map((t) => getTimestamp(t.updatedAt)));
+  };
+
+  return [...list]
+    .map((project) => ({
+      ...project,
+      tasks: project.tasks
+        ? [...project.tasks].sort((a, b) => getTimestamp(b.updatedAt) - getTimestamp(a.updatedAt))
+        : project.tasks,
+    }))
+    .sort((a, b) => getMaxTaskUpdatedAt(b) - getMaxTaskUpdatedAt(a));
+};
+
 const RightSidebarBridge: React.FC<{
   onCollapsedChange: (collapsed: boolean) => void;
   setCollapsedRef: React.MutableRefObject<((next: boolean) => void) | null>;
@@ -357,7 +377,7 @@ const AppContent: React.FC = () => {
                     style={{ display: showEditorMode ? 'none' : undefined }}
                   >
                     <LeftSidebar
-                      projects={projectMgmt.projects}
+                      projects={sortByRecency(projectMgmt.projects)}
                       archivedTasksVersion={taskMgmt.archivedTasksVersion}
                       selectedProject={selectedProject}
                       onSelectProject={projectMgmt.handleSelectProject}

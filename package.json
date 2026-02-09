@@ -16,6 +16,7 @@
     "package:mac": "pnpm run build && electron-builder --mac",
     "package:linux": "pnpm run build && electron-builder --linux --publish never",
     "package:win": "pnpm run build && electron-builder --win --publish never",
+    "prod": "pnpm run package:mac && open release/mac-arm64/Emdash.app",
     "postinstall": "electron-rebuild",
     "rebuild": "electron-rebuild -f -v 30.5.1",
     "clean": "rm -rf node_modules dist",
