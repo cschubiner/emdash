@@ -238,6 +238,7 @@ const AppContent: React.FC = () => {
     });
   }, []);
 
+  const deleteTask = taskMgmt.handleDeleteTask;
   const handleDeleteTaskAndUnpin: typeof taskMgmt.handleDeleteTask = useCallback(
     async (project, task, options) => {
       setPinnedTaskIds((prev) => {
@@ -247,9 +248,9 @@ const AppContent: React.FC = () => {
         localStorage.setItem(PINNED_TASKS_KEY, JSON.stringify([...next]));
         return next;
       });
-      return taskMgmt.handleDeleteTask(project, task, options);
+      return deleteTask(project, task, options);
     },
-    [taskMgmt.handleDeleteTask]
+    [deleteTask]
   );
 
   // --- Task creation wrapper ---

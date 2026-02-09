@@ -161,19 +161,7 @@ class TaskLifecycleService extends EventEmitter {
     projectPath: string,
     phase: Extract<LifecyclePhase, 'setup' | 'teardown'>
   ): Promise<LifecycleResult> {
-    const script = lifecycleScriptsService.getScript(projectPath, phase);
-    if (!script) return Promise.resolve({ ok: true, skipped: true });
-
     const state = this.ensureState(taskId);
-    state[phase] = {
-      status: 'running',
-      startedAt: this.nowIso(),
-      finishedAt: undefined,
-      exitCode: null,
-      error: null,
-    };
-    this.emitLifecycleEvent(taskId, phase, 'starting');
-
     return new Promise<LifecycleResult>((resolve) => {
       void (async () => {
         let settled = false;
@@ -184,6 +172,21 @@ class TaskLifecycleService extends EventEmitter {
           resolve(result);
         };
         try {
+          const script = await lifecycleScriptsService.getScript(projectPath, phase);
+          if (!script) {
+            resolve({ ok: true, skipped: true });
+            return;
+          }
+
+          state[phase] = {
+            status: 'running',
+            startedAt: this.nowIso(),
+            finishedAt: undefined,
+            exitCode: null,
+            error: null,
+          };
+          this.emitLifecycleEvent(taskId, phase, 'starting');
+
           const env = await this.buildLifecycleEnv(taskId, taskPath, projectPath);
           const child = spawn(script, {
             cwd: taskPath,
@@ -274,7 +277,7 @@ class TaskLifecycleService extends EventEmitter {
     taskPath: string,
     projectPath: string
   ): Promise<LifecycleResult> {
-    const setupScript = lifecycleScriptsService.getScript(projectPath, 'setup');
+    const setupScript = await lifecycleScriptsService.getScript(projectPath, 'setup');
     if (setupScript) {
       const setupStatus = this.ensureState(taskId).setup.status;
       if (setupStatus === 'running') {
@@ -288,7 +291,7 @@ class TaskLifecycleService extends EventEmitter {
       }
     }
 
-    const script = lifecycleScriptsService.getScript(projectPath, 'run');
+    const script = await lifecycleScriptsService.getScript(projectPath, 'run');
     if (!script) return { ok: true, skipped: true };
 
     const existing = this.runProcesses.get(taskId);

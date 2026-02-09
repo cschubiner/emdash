@@ -4,6 +4,8 @@ import { log } from '../lib/logger';
 
 export interface EmdashScripts {
   setup?: string;
+  run?: string;
+  teardown?: string;
 }
 
 export interface EmdashConfig {
@@ -41,6 +43,14 @@ class LifecycleScriptsService {
   async getSetupScript(projectPath: string): Promise<string | null> {
     const config = await this.readConfig(projectPath);
     return config?.scripts?.setup || null;
+  }
+
+  async getScript(
+    projectPath: string,
+    phase: 'setup' | 'run' | 'teardown'
+  ): Promise<string | null> {
+    const config = await this.readConfig(projectPath);
+    return config?.scripts?.[phase] || null;
   }
 }
 

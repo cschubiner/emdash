@@ -58,7 +58,7 @@ export const TaskDeleteButton: React.FC<Props> = ({
   // Only check for deletion risks if the task uses a worktree.
   // Tasks running directly on the main branch (useWorktree === false) don't need risk assessment
   // since they don't have isolated changes that could be lost.
-  const { risks, loading, hasData } = useDeleteRisks(targets, open && useWorktree);
+  const { risks, loading } = useDeleteRisks(targets, open && useWorktree);
   const status = risks[taskId] || {
     staged: 0,
     unstaged: 0,
@@ -81,6 +81,7 @@ export const TaskDeleteButton: React.FC<Props> = ({
       !!status.error ||
       !!(status.pr && isActivePr(status.pr)));
   const disableDelete: boolean = Boolean(isDeleting || loading) || (risky && !acknowledge);
+  const disableForceDelete: boolean = Boolean(isDeleting);
 
   React.useEffect(() => {
     if (!open) {
@@ -214,6 +215,19 @@ export const TaskDeleteButton: React.FC<Props> = ({
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="border border-destructive/40 bg-transparent px-4 py-2 text-destructive hover:bg-destructive/10"
+            disabled={disableForceDelete}
+            onClick={async (e) => {
+              e.stopPropagation();
+              setOpen(false);
+              try {
+                await onConfirm();
+              } catch {}
+            }}
+          >
+            Force delete
+          </AlertDialogAction>
           <AlertDialogAction
             className="bg-destructive px-4 py-2 text-destructive-foreground hover:bg-destructive/90"
             disabled={disableDelete}
